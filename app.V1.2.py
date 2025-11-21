@@ -524,7 +524,7 @@ def render_potential_spherical():
         "電偶極 (Electric Dipole)": "k * cos(theta) / r^2",
         "電四極 (Electric Quadrupole)": "k * (3*cos(theta)**2 - 1) / r^3",
         "均勻電場 (Uniform Field)": "-k * r * cos(theta)",
-        "圓柱殼內電位 (Cylindrical Harmonics)": "r * sin(theta)",
+        "簡單範例 ": "sin(theta)",
         "複雜組合範例": "k/r + r*cos(theta)"
     }
 
@@ -600,7 +600,7 @@ def render_potential_spherical():
         THETA = np.arctan2(Y, X)
         
         # 處理奇異點 (r=0)
-        R[R < 1e-9] = 1e-9
+        R[R < 1e-5] = 1e-5
 
         # 計算電位值
         Z_V = func_V(R, THETA)
