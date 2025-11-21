@@ -600,7 +600,7 @@ def render_potential_spherical():
         THETA = np.arctan2(Y, X)
         
         # 處理奇異點 (r=0)
-        R[R < 1e-5] = 1e-5
+        R[R < 1e-3] = 1e-3
 
         # 計算電位值
         Z_V = func_V(R, THETA)
