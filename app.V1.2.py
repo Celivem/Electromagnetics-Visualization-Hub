@@ -332,63 +332,66 @@ def render_legendre_page():
         c2.download_button("📥 下載係數", df.to_csv(index=False).encode(), "coeffs.csv", "text/csv", use_container_width=True)
         with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
 
-# --- 電位: 點電荷 ---
+# --- 電位模擬 (點電荷) ---
 def render_potential_point_charge():
     st.subheader("⚡ 點電荷電位與電場模擬")
-    
-    # 側邊欄控制區
+    st.markdown("透過側邊欄新增電荷，即時觀察電位 ($V$) 與電場線 ($E$) 的變化。")
+
+    # 側邊欄控制 (專屬於此頁面)
     st.sidebar.markdown("---")
     st.sidebar.header("🔋 電荷控制")
     
-    c1, c2 = st.sidebar.columns(2)
-    new_q = c1.number_input("電荷量 q", 1.0, step=0.5)
-    new_x = c2.number_input("X 座標", 0.0, step=0.5)
-    new_y = st.sidebar.number_input("Y 座標", 0.0, step=0.5)
+    col1, col2 = st.sidebar.columns(2)
+    new_q = col1.number_input("電荷量 (q)", value=1.0, step=0.5)
     
+    col3, col4 = st.sidebar.columns(2)
+    new_x = col3.number_input("X 座標", value=0.0, step=0.5, min_value=-5.0, max_value=5.0)
+    new_y = col4.number_input("Y 座標", value=0.0, step=0.5, min_value=-5.0, max_value=5.0)
+
     if st.sidebar.button("➕ 加入電荷", use_container_width=True):
         st.session_state.point_charges.append({'q': new_q, 'x': new_x, 'y': new_y})
     
-    if st.sidebar.button("🗑️ 清除所有", use_container_width=True):
+    if st.sidebar.button("🗑️ 清除所有電荷", use_container_width=True):
         st.session_state.point_charges = []
         
     st.sidebar.divider()
-    st.sidebar.subheader(f"目前電荷 ({len(st.session_state.point_charges)})")
-    for i, c in enumerate(st.session_state.point_charges): 
-        st.sidebar.text(f"{i+1}. q={c['q']}, ({c['x']},{c['y']})")
-        
-    show_stream = st.sidebar.checkbox("顯示流線", True)
-    grid_res = st.sidebar.slider("網格解析度", 50, 300, 100)
+    st.sidebar.subheader("目前電荷列表")
+    if not st.session_state.point_charges:
+        st.sidebar.info("目前沒有電荷")
+    else:
+        for i, c in enumerate(st.session_state.point_charges):
+            st.sidebar.text(f"{i+1}. q={c['q']}, pos=({c['x']}, {c['y']})")
+            
+    st.sidebar.divider()
+    show_streamlines = st.sidebar.checkbox("顯示電場流線 (Streamlines)", value=True)
+    grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
 
+    # 主畫面繪圖
     if st.session_state.point_charges:
-        # 轉換為 tuple 以符合 @st.cache_data 的雜湊要求 (雖然 list 也可以，但 tuple 更安全)
-        charges_tuple = tuple(st.session_state.point_charges)
-        X, Y, V = calculate_point_charge_potential(charges_tuple, grid_res)
+        X, Y, V = calculate_point_charge_potential(st.session_state.point_charges, grid_res)
         
         fig, ax = plt.subplots(figsize=(10, 8))
-        contour = ax.contourf(X, Y, V, levels=50, cmap='RdBu_r', extend='both')
-        ax.contour(X, Y, V, levels=50, colors='k', alpha=0.4, linewidths=0.5)
+        v_levels = np.linspace(-3, 3, 50)
+        contour = ax.contourf(X, Y, V, levels=v_levels, cmap='RdBu_r', extend='both')
+        ax.contour(X, Y, V, levels=v_levels, colors='k', linewidths=0.5, alpha=0.4)
         
-        if show_stream:
+        if show_streamlines:
             Ey, Ex = np.gradient(-V)
-            # 過濾掉極小值，避免流線圖雜亂
-            mag = np.sqrt(Ex**2 + Ey**2)
-            Ex = np.where(mag > 0, Ex, 0)
-            Ey = np.where(mag > 0, Ey, 0)
             ax.streamplot(X, Y, Ex, Ey, color='#444444', density=1.2, linewidth=0.6, arrowsize=1)
-            
-        for c in st.session_state.point_charges:
-            col = '#d62728' if c['q']>0 else '#1f77b4'
-            marker_sign = '+' if c['q']>0 else '-'
-            ax.plot(c['x'], c['y'], marker='o', color=col, markersize=15, markeredgecolor='k')
-            ax.text(c['x'], c['y'], marker_sign, color='w', ha='center', va='center', fontweight='bold')
-            
+        
+        for charge in st.session_state.point_charges:
+            color = '#d62728' if charge['q'] > 0 else '#1f77b4'
+            sign = '+' if charge['q'] > 0 else '-'
+            ax.plot(charge['x'], charge['y'], marker='o', color=color, markersize=15, markeredgecolor='black')
+            ax.text(charge['x'], charge['y'], sign, color='white', ha='center', va='center', fontweight='bold')
+
         ax.set_aspect('equal')
-        ax.set_title("Electric Potential & Field")
-        fig.colorbar(contour, ax=ax)
+        ax.set_xlim(-5, 5); ax.set_ylim(-5, 5)
+        ax.set_title("Electric Potential Landscape")
+        fig.colorbar(contour, ax=ax, label='Electric Potential (V)')
         st.pyplot(fig)
-        plt.close(fig)
     else:
-        st.warning("請由左側欄位加入電荷")
+        st.warning("請在左側側邊欄加入至少一個電荷以開始模擬。")
 
 # --- 電位: 笛卡爾 ---
 def render_laplace_cartesian():
@@ -511,7 +514,7 @@ def render_laplace_cartesian():
 def render_potential_spherical():
     st.subheader("🌐 2D 極座標/球座標切面電位分析")
     st.markdown("輸入電位 $V(r, \\theta)$，程式將計算電場 $\\vec{E} = -\\nabla V$ 並繪圖。")
-    
+
     presets = {
         "點電荷": "k / r",
         "電偶極": "k * cos(theta) / r^2",
@@ -519,12 +522,10 @@ def render_potential_spherical():
         "均勻電場": "-k * r * cos(theta)",
         "殼內電位": "r * sin(theta)"
     }
-    
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("**極座標參數**")
-    
-    # 使用 key 避免狀態丟失
-    sel = st.sidebar.selectbox("選擇模型", list(presets.keys()), index=1, key="sp_model_select")
+    sel = st.sidebar.selectbox("選擇模型", list(presets.keys()), index=1)
     user_input = st.sidebar.text_input("輸入 V(r, theta)", value=presets[sel])
     
     rmax = st.sidebar.slider("半徑範圍", 1.0, 10.0, 5.0)
@@ -533,21 +534,22 @@ def render_potential_spherical():
 
     if user_input:
         try:
+            # SymPy 解析 (加上快取邏輯會更好，但這裡直接運算也很快)
             r, theta, k = sp.symbols('r theta k', real=True)
             trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
             local_d = {'k': k, 'pi': sp.pi, 'e': sp.E, 'r': r, 'theta': theta}
             
-            V_expr = parse_expr(user_input, local_dict=local_d, transformations=trans)
+            try:
+                V_expr = parse_expr(user_input, local_dict=local_d, transformations=trans)
+            except Exception as e:
+                st.error(f"公式解析失敗: {e}"); return
+
             E_r = -sp.diff(V_expr, r)
             E_theta = -(1/r) * sp.diff(V_expr, theta)
 
             c1, c2 = st.columns(2)
-            with c1: 
-                st.markdown("**電位 V**")
-                st.latex(sp.latex(V_expr))
-            with c2: 
-                st.markdown("**電場 E**")
-                st.latex(f"E_r = {sp.latex(E_r)}, \\quad E_\\theta = {sp.latex(E_theta)}")
+            with c1: st.markdown("**電位 V**"); st.latex(sp.latex(V_expr))
+            with c2: st.markdown("**電場 E**"); st.latex(f"E_r = {sp.latex(E_r)}, \\quad E_\\theta = {sp.latex(E_theta)}")
 
             # 數值化
             func_V = sp.lambdify((r, theta), V_expr.subs(k, 1), 'numpy')
@@ -559,8 +561,7 @@ def render_potential_spherical():
             X, Y = np.meshgrid(x, x)
             R = np.sqrt(X**2 + Y**2)
             THETA = np.arctan2(Y, X)
-            
-            # 避免奇異點
+            # 遮罩掉過小的半徑避免奇異點
             mask = R < 0.1
             R = np.maximum(R, 0.1)
 
@@ -572,26 +573,22 @@ def render_potential_spherical():
             try:
                 contour = ax.contourf(X, Y, Z_V, levels=50, cmap='viridis')
                 plt.colorbar(contour, ax=ax, label='Potential (V)')
-            except: 
-                st.warning("數值範圍過大，無法繪製等位面")
+            except: st.warning("數值範圍過大，無法繪製等位面")
 
             if show_lines:
                 U_Er = func_Er(R, THETA)
                 U_Et = func_Et(R, THETA)
-                
                 if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
                 if np.isscalar(U_Et): U_Et = np.full_like(R, U_Et)
                 
-                # 轉回直角座標繪圖
+                # 轉回直角座標向量
                 Ex = U_Er * np.cos(THETA) - U_Et * np.sin(THETA)
                 Ey = U_Er * np.sin(THETA) + U_Et * np.cos(THETA)
                 
-                ax.streamplot(X, Y, np.nan_to_num(Ex), np.nan_to_num(Ey), color=(1, 1, 1, 0.5), density=1.2, linewidth=0.8)
+                ax.streamplot(X, Y, np.nan_to_num(Ex), np.nan_to_num(Ey), color=(1,1,1,0.5), density=1.2, linewidth=0.8)
 
-            ax.set_aspect('equal')
-            ax.set_title("Potential & Field Lines")
-            ax.set_xlim(-rmax, rmax)
-            ax.set_ylim(-rmax, rmax)
+            ax.set_aspect('equal'); ax.set_title("Potential & Field Lines")
+            ax.set_xlim(-rmax, rmax); ax.set_ylim(-rmax, rmax)
             st.pyplot(fig)
             plt.close(fig)
 
