@@ -513,85 +513,151 @@ def render_laplace_cartesian():
 # --- 電位: 球座標 (新整合功能) ---
 def render_potential_spherical():
     st.subheader("🌐 2D 極座標/球座標切面電位分析")
-    st.markdown("輸入電位 $V(r, \\theta)$，程式將計算電場 $\\vec{E} = -\\nabla V$ 並繪圖。")
-
-    # 定義預設範例
-    presets = {
-        "點電荷": "k / r",
-        "電偶極": "k * cos(theta) / r^2",
-        "電四極": "k * (3*cos(theta)**2 - 1) / r^3",
-        "均勻電場": "-k * r * cos(theta)",
-        "殼內電位": "r * sin(theta)"
+    st.markdown(r"""
+    輸入電位函數 $V(r, \theta)$，程式將自動計算電場 $\vec{E} = -\nabla V$ 並繪製分佈圖。
+    """)
+    
+    # --- 定義預設範例庫 ---
+    PRESETS = {
+        "自定義 (Custom)": "",
+        "點電荷 (Point Charge)": "k / r",
+        "電偶極 (Electric Dipole)": "k * cos(theta) / r^2",
+        "電四極 (Electric Quadrupole)": "k * (3*cos(theta)**2 - 1) / r^3",
+        "均勻電場 (Uniform Field)": "-k * r * cos(theta)",
+        "圓柱殼內電位 (Cylindrical Harmonics)": "r * sin(theta)",
+        "複雜組合範例": "k/r + r*cos(theta)"
     }
 
-    # 側邊欄控制
+    # --- 側邊欄設定 ---
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**極座標參數**")
-    sel = st.sidebar.selectbox("選擇模型", list(presets.keys()), index=1)
-    user_input = st.sidebar.text_input("輸入 V(r, theta)", value=presets[sel])
+    st.sidebar.markdown("**極座標參數設定**")
     
-    rmax = st.sidebar.slider("半徑範圍", 1.0, 10.0, 5.0)
-    grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
-    show_lines = st.sidebar.checkbox("顯示電場線", True)
+    # 使用 key 避免重整時重置
+    selected_preset = st.sidebar.selectbox("選擇模型", list(PRESETS.keys()), index=2, key="sp_preset")
+    default_value = PRESETS[selected_preset]
+    
+    user_input = st.sidebar.text_input(
+        "輸入 V(r, theta)", 
+        value=default_value,
+        help="支援變數: r, theta, k。例如: k*cos(theta)/r^2"
+    )
 
-    if user_input:
+    rmax = st.sidebar.slider("最大範圍 (XY軸邊界)", 1.0, 10.0, 5.0)
+    grid_res = st.sidebar.slider("網格解析度", 50, 300, 100)
+    show_field_lines = st.sidebar.checkbox("顯示電場線 (Streamlines)", value=True)
+
+    if not user_input:
+        st.info("👈 請在左側輸入公式或選擇範例以開始。")
+        return
+
+    try:
+        # --- 1. SymPy 解析 ---
+        r, theta, k = sp.symbols('r theta k', real=True)
+        
+        transformations = (standard_transformations + 
+                           (implicit_multiplication_application,) + 
+                           (convert_xor,))
+        
+        local_dict = {'k': k, 'pi': sp.pi, 'e': sp.E, 'r': r, 'theta': theta}
+        
+        V_expr = parse_expr(user_input, local_dict=local_dict, transformations=transformations)
+        V_expr = sp.simplify(V_expr)
+
+        # 計算電場 (Gradient in Polar Coordinates)
+        # E = - grad V = - (dV/dr * r_hat + (1/r)*dV/dtheta * theta_hat)
+        E_r = -sp.diff(V_expr, r)
+        E_theta = -(1/r) * sp.diff(V_expr, theta)
+
+        # --- 2. 顯示數學結果 ---
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**電位 Potential $V(r, \\theta)$:**")
+            st.latex(f"V = {sp.latex(V_expr)}")
+        with c2:
+            st.markdown("**電場 Electric Field $\\vec{E}$:**")
+            st.latex(r"E_r = " + sp.latex(sp.simplify(E_r)))
+            st.latex(r"E_\theta = " + sp.latex(sp.simplify(E_theta)))
+
+        # --- 3. 數值計算準備 ---
+        # 令 k=1 進行數值模擬
+        V_num = V_expr.subs(k, 1)
+        Er_num = E_r.subs(k, 1)
+        Etheta_num = E_theta.subs(k, 1)
+
+        # 轉為 Python 函數 (Numpy backend)
+        func_V = sp.lambdify((r, theta), V_num, modules=['numpy'])
+        func_Er = sp.lambdify((r, theta), Er_num, modules=['numpy'])
+        func_Etheta = sp.lambdify((r, theta), Etheta_num, modules=['numpy'])
+
+        # --- 4. 建立網格與座標轉換 ---
+        # 使用 Cartesian Grid 滿足 streamplot 需求
+        x_vals = np.linspace(-rmax, rmax, grid_res)
+        y_vals = np.linspace(-rmax, rmax, grid_res)
+        X, Y = np.meshgrid(x_vals, y_vals)
+
+        # 直角 -> 極座標
+        R = np.sqrt(X**2 + Y**2)
+        THETA = np.arctan2(Y, X)
+        
+        # 處理奇異點 (r=0)
+        R[R < 1e-9] = 1e-9
+
+        # 計算電位值
+        Z_V = func_V(R, THETA)
+        if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
+
+        # --- 5. 繪圖 ---
+        fig, ax = plt.subplots(figsize=(8, 7))
+        
+        # 繪製電位 (使用 'jet' 呈現彩虹色)
         try:
-            # 1. SymPy 解析
-            r, theta, k = sp.symbols('r theta k', real=True)
-            trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
-            local_d = {'k': k, 'pi': sp.pi, 'e': sp.E, 'r': r, 'theta': theta}
-            V_expr = parse_expr(user_input, local_dict=local_d, transformations=trans)
+            # levels=50 讓漸層更平滑
+            contour = ax.contourf(X, Y, Z_V, levels=50, cmap='jet') 
+            plt.colorbar(contour, ax=ax, label='Potential V (Volts)')
+        except ValueError:
+            st.warning("數值範圍過大或包含複數，無法繪製電位圖。")
+
+        # 繪製電場線
+        if show_field_lines:
+            # 計算極座標下的電場分量
+            U_Er = func_Er(R, THETA)
+            U_Etheta = func_Etheta(R, THETA)
             
-            # 計算 Gradient (極座標: Er = -dV/dr, Etheta = -(1/r)dV/dtheta)
-            E_r = -sp.diff(V_expr, r)
-            E_theta = -(1/r) * sp.diff(V_expr, theta)
+            if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
+            if np.isscalar(U_Etheta): U_Etheta = np.full_like(R, U_Etheta)
 
-            # 顯示公式
-            c1, c2 = st.columns(2)
-            with c1: st.markdown("**電位 V**"); st.latex(sp.latex(V_expr))
-            with c2: st.markdown("**電場 E**"); st.latex(f"E_r = {sp.latex(E_r)}"); st.latex(f"E_\\theta = {sp.latex(E_theta)}")
+            # 向量分解：極座標向量 -> 直角座標向量
+            # Ex = Er * cos(theta) - Etheta * sin(theta)
+            # Ey = Er * sin(theta) + Etheta * cos(theta)
+            Ex = U_Er * np.cos(THETA) - U_Etheta * np.sin(THETA)
+            Ey = U_Er * np.sin(THETA) + U_Etheta * np.cos(THETA)
 
-            # 2. 數值化 (設 k=1)
-            func_V = sp.lambdify((r, theta), V_expr.subs(k, 1), 'numpy')
-            func_Er = sp.lambdify((r, theta), E_r.subs(k, 1), 'numpy')
-            func_Et = sp.lambdify((r, theta), E_theta.subs(k, 1), 'numpy')
+            # 處理 NaN/Inf
+            Ex = np.nan_to_num(Ex)
+            Ey = np.nan_to_num(Ey)
 
-            # 3. 網格生成 (Cartesian -> Polar)
-            x = np.linspace(-rmax, rmax, grid_res)
-            X, Y = np.meshgrid(x, x)
-            R = np.sqrt(X**2 + Y**2)
-            THETA = np.arctan2(Y, X)
-            R[R < 1e-9] = 1e-9 # 避免奇異點
+            # 繪製 Streamplot (白色半透明)
+            ax.streamplot(
+                X, Y, Ex, Ey, 
+                color=(1, 1, 1, 0.5), 
+                linewidth=0.8, 
+                density=1.2, 
+                arrowsize=1.0
+            )
 
-            # 計算數值
-            Z_V = func_V(R, THETA)
-            if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
+        ax.set_aspect('equal')
+        ax.set_title(f"Potential Distribution: ${sp.latex(V_expr)}$")
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_xlim(-rmax, rmax)
+        ax.set_ylim(-rmax, rmax)
+        
+        st.pyplot(fig)
+        plt.close(fig)
 
-            # 繪圖
-            fig, ax = plt.subplots(figsize=(8, 7))
-            try:
-                contour = ax.contourf(X, Y, Z_V, levels=50, cmap='viridis')
-                plt.colorbar(contour, ax=ax, label='Potential (V)')
-            except: st.warning("數值範圍過大，無法繪製等位面")
-
-            if show_lines:
-                U_Er = func_Er(R, THETA)
-                U_Et = func_Et(R, THETA)
-                if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
-                if np.isscalar(U_Et): U_Et = np.full_like(R, U_Et)
-                
-                # 轉回直角座標向量繪圖
-                Ex = U_Er * np.cos(THETA) - U_Et * np.sin(THETA)
-                Ey = U_Er * np.sin(THETA) + U_Et * np.cos(THETA)
-                
-                ax.streamplot(X, Y, np.nan_to_num(Ex), np.nan_to_num(Ey), color=(1,1,1,0.5), density=1.2, linewidth=0.8)
-
-            ax.set_aspect('equal'); ax.set_title("Potential & Field Lines")
-            ax.set_xlim(-rmax, rmax); ax.set_ylim(-rmax, rmax)
-            st.pyplot(fig)
-
-        except Exception as e:
-            st.error(f"解析錯誤: {e}")
+    except Exception as e:
+        st.error(f"解析或運算錯誤: {e}")
+        st.warning("若包含奇異點 (如 1/r 在 r=0)，中心點數值可能趨近無限大。")
 
 # ==========================================
 # 4. 主導航邏輯
