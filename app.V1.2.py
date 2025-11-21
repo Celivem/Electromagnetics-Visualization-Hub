@@ -670,7 +670,7 @@ elif cat == "函數近似":
     sub = st.sidebar.radio("方法", ["傅立葉近似", "勒讓德近似"])
     if sub == "傅立葉近似": render_fourier_page()
     else: render_legendre_page()
-elif cat == "電位模擬":
+elif cat == "電位+電場模擬":
     sub = st.sidebar.radio("結構", ["笛卡爾 (Cartesian)", "球座標 (Spherical)", "點電荷"])
     if sub == "笛卡爾 (Cartesian)": render_laplace_cartesian()
     elif sub == "球座標 (Spherical)": render_potential_spherical()
