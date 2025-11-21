@@ -134,7 +134,7 @@ def calculate_point_charge_potential(charges, grid_size=100):
         x0 = charge['x']
         y0 = charge['y']
         r = np.sqrt((X - x0)**2 + (Y - y0)**2)
-        V_total += q / (r + 1e-9) 
+        V_total += q / (r + 1e-3) 
         
     return X, Y, V_total
 
@@ -483,3 +483,4 @@ elif category == "電位模擬":
 elif category == "電場模擬":
     sub_category = st.sidebar.radio("選擇座標/結構", ["笛卡爾", "球座標", "柱座標", "點電荷"])
     render_developing(f"電場模擬 - {sub_category}")
+
