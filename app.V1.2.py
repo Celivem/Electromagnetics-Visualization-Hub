@@ -179,8 +179,7 @@ def render_home():
     ### 歡迎來到互動學習實驗室！
     請從左側選單選擇您想要探索的主題：
     * **函數近似**：傅立葉級數、勒讓德多項式。
-    * **電位模擬**：笛卡爾座標、球座標(極座標切面)、點電荷。
-    * **電場模擬**：(開發中)。
+    * **電位+電場模擬(2D)**：笛卡爾座標、球座標、點電荷。
     👈 **請點擊左上角箭頭打開側邊欄！**
     """)
 
@@ -252,7 +251,7 @@ def render_fourier_page():
         c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", use_container_width=True)
         with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
 
-# --- 勒讓德 (修正版：極座標增加目標函數對照) ---
+# --- 勒讓德  ---
 def render_legendre_page():
     st.subheader("🌊 勒讓德級數近似")
     legendre_examples = {
@@ -663,7 +662,7 @@ def render_potential_spherical():
 # 4. 主導航邏輯
 # ==========================================
 st.sidebar.title("⚡ 導航選單")
-cat = st.sidebar.selectbox("選擇模組", ["首頁", "函數近似", "電位模擬", "電場模擬"])
+cat = st.sidebar.selectbox("選擇模組", ["首頁", "函數近似", "電位+電場模擬"])
 
 if cat == "首頁": 
     render_home()
@@ -672,11 +671,7 @@ elif cat == "函數近似":
     if sub == "傅立葉近似": render_fourier_page()
     else: render_legendre_page()
 elif cat == "電位模擬":
-    sub = st.sidebar.radio("結構", ["笛卡爾 (Cartesian)", "球座標 (Spherical)", "柱座標", "點電荷"])
+    sub = st.sidebar.radio("結構", ["笛卡爾 (Cartesian)", "球座標 (Spherical)", "點電荷"])
     if sub == "笛卡爾 (Cartesian)": render_laplace_cartesian()
     elif sub == "球座標 (Spherical)": render_potential_spherical()
     elif sub == "點電荷": render_potential_point_charge()
-    else: render_developing(f"電位模擬 - {sub}")
-else:
-    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "柱座標", "點電荷"])
-    render_developing(f"電場模擬 - {sub}")
