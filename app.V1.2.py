@@ -510,11 +510,12 @@ def render_laplace_cartesian():
             else:
                 st.warning("沒有有效的邊界條件輸入或積分結果為零")
 
-# --- 電位: 球座標 ---
+# --- 電位: 球座標 (新整合功能) ---
 def render_potential_spherical():
     st.subheader("🌐 2D 極座標/球座標切面電位分析")
     st.markdown("輸入電位 $V(r, \\theta)$，程式將計算電場 $\\vec{E} = -\\nabla V$ 並繪圖。")
 
+    # 定義預設範例
     presets = {
         "點電荷": "k / r",
         "電偶極": "k * cos(theta) / r^2",
@@ -523,52 +524,50 @@ def render_potential_spherical():
         "殼內電位": "r * sin(theta)"
     }
 
+    # 側邊欄控制
     st.sidebar.markdown("---")
     st.sidebar.markdown("**極座標參數**")
     sel = st.sidebar.selectbox("選擇模型", list(presets.keys()), index=1)
     user_input = st.sidebar.text_input("輸入 V(r, theta)", value=presets[sel])
     
     rmax = st.sidebar.slider("半徑範圍", 1.0, 10.0, 5.0)
-    grid_res = st.sidebar.slider("網格解析度", 50, 300, 100)
+    grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
     show_lines = st.sidebar.checkbox("顯示電場線", True)
 
     if user_input:
         try:
-            # SymPy 解析 (加上快取邏輯會更好，但這裡直接運算也很快)
+            # 1. SymPy 解析
             r, theta, k = sp.symbols('r theta k', real=True)
             trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
             local_d = {'k': k, 'pi': sp.pi, 'e': sp.E, 'r': r, 'theta': theta}
+            V_expr = parse_expr(user_input, local_dict=local_d, transformations=trans)
             
-            try:
-                V_expr = parse_expr(user_input, local_dict=local_d, transformations=trans)
-            except Exception as e:
-                st.error(f"公式解析失敗: {e}"); return
-
+            # 計算 Gradient (極座標: Er = -dV/dr, Etheta = -(1/r)dV/dtheta)
             E_r = -sp.diff(V_expr, r)
             E_theta = -(1/r) * sp.diff(V_expr, theta)
 
+            # 顯示公式
             c1, c2 = st.columns(2)
             with c1: st.markdown("**電位 V**"); st.latex(sp.latex(V_expr))
-            with c2: st.markdown("**電場 E**"); st.latex(f"E_r = {sp.latex(E_r)}, \\quad E_\\theta = {sp.latex(E_theta)}")
+            with c2: st.markdown("**電場 E**"); st.latex(f"E_r = {sp.latex(E_r)}"); st.latex(f"E_\\theta = {sp.latex(E_theta)}")
 
-            # 數值化
+            # 2. 數值化 (設 k=1)
             func_V = sp.lambdify((r, theta), V_expr.subs(k, 1), 'numpy')
             func_Er = sp.lambdify((r, theta), E_r.subs(k, 1), 'numpy')
             func_Et = sp.lambdify((r, theta), E_theta.subs(k, 1), 'numpy')
 
-            # 網格生成
+            # 3. 網格生成 (Cartesian -> Polar)
             x = np.linspace(-rmax, rmax, grid_res)
             X, Y = np.meshgrid(x, x)
             R = np.sqrt(X**2 + Y**2)
             THETA = np.arctan2(Y, X)
-            # 遮罩掉過小的半徑避免奇異點
-            mask = R < 0.1
-            R = np.maximum(R, 0.1)
+            R[R < 1e-9] = 1e-9 # 避免奇異點
 
+            # 計算數值
             Z_V = func_V(R, THETA)
             if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
-            Z_V[mask] = np.nan
 
+            # 繪圖
             fig, ax = plt.subplots(figsize=(8, 7))
             try:
                 contour = ax.contourf(X, Y, Z_V, levels=50, cmap='viridis')
@@ -581,7 +580,7 @@ def render_potential_spherical():
                 if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
                 if np.isscalar(U_Et): U_Et = np.full_like(R, U_Et)
                 
-                # 轉回直角座標向量
+                # 轉回直角座標向量繪圖
                 Ex = U_Er * np.cos(THETA) - U_Et * np.sin(THETA)
                 Ey = U_Er * np.sin(THETA) + U_Et * np.cos(THETA)
                 
@@ -590,10 +589,9 @@ def render_potential_spherical():
             ax.set_aspect('equal'); ax.set_title("Potential & Field Lines")
             ax.set_xlim(-rmax, rmax); ax.set_ylim(-rmax, rmax)
             st.pyplot(fig)
-            plt.close(fig)
 
         except Exception as e:
-            st.error(f"運算錯誤: {e}")
+            st.error(f"解析錯誤: {e}")
 
 # ==========================================
 # 4. 主導航邏輯
