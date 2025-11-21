@@ -252,7 +252,7 @@ def render_fourier_page():
         c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", use_container_width=True)
         with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
 
-# --- 勒讓德 ---
+# --- 勒讓德 (修正版：極座標增加目標函數對照) ---
 def render_legendre_page():
     st.subheader("🌊 勒讓德級數近似")
     legendre_examples = {
@@ -287,29 +287,40 @@ def render_legendre_page():
         st.divider()
         current_n = st.slider("疊加階數", 0, len(coeffs)-1, len(coeffs)-1)
         
+        # 1. 準備笛卡爾座標數據
         x = np.linspace(-1, 1, 400)
         y_target = eval_func(func_expr, x)
-        
-        # 向量化計算 (Vectorized)
-        # 利用列表生成式快速加總
         y_approx = sum(coeffs[n] * eval_legendre(n, x) for n in range(current_n + 1))
         
         fig = plt.figure(figsize=(12, 5))
         
-        # 子圖 1: 笛卡爾座標
+        # --- 子圖 1: 笛卡爾座標 (Cartesian) ---
         ax1 = fig.add_subplot(1, 2, 1)
-        ax1.plot(x, y_target, 'k--', alpha=0.3, label="Target")
-        ax1.plot(x, y_approx, 'r-', label="Approx")
-        ax1.set_title("Cartesian Projection")
+        ax1.plot(x, y_target, 'k--', alpha=0.5, label="Target")
+        ax1.plot(x, y_approx, 'r-', linewidth=2, label="Approx")
+        ax1.set_title("Cartesian Projection (x vs f(x))")
+        ax1.set_xlabel("x = cos(theta)")
         ax1.legend()
+        ax1.grid(True, alpha=0.3)
         
-        # 子圖 2: 極座標
+        # --- 子圖 2: 極座標 (Polar) ---
+        # 對應關係：x = cos(theta)
         ax2 = fig.add_subplot(1, 2, 2, projection='polar')
         theta = np.linspace(0, 2*np.pi, 400)
-        # 計算極座標下的 r (取絕對值繪圖)
+        
+        # 計算目標函數在極座標下的值
+        # 我們將 x 替換為 cos(theta) 來獲得目標輪廓
+        r_target_polar = eval_func(func_expr, np.cos(theta))
+        
+        # 計算近似值
         r_approx = sum(coeffs[n] * eval_legendre(n, np.cos(theta)) for n in range(current_n + 1))
-        ax2.plot(theta, np.abs(r_approx), 'b-')
-        ax2.set_title("Polar Projection (Abs)")
+        
+        # 繪圖 (取絕對值 abs 以便在極座標半徑中顯示大小)
+        ax2.plot(theta, np.abs(r_target_polar), 'k--', alpha=0.5, label='Target')
+        ax2.plot(theta, np.abs(r_approx), 'r-', linewidth=2, label='Approx')
+        
+        ax2.set_title("Polar Projection (Abs magnitude)")
+        ax2.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1)) # 將圖例移出避免遮擋
         
         st.pyplot(fig)
         plt.close(fig)
