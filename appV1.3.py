@@ -1,98 +1,191 @@
 import streamlit as st
 import numpy as np
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import time
+from scipy.integrate import quad
+from scipy import special, signal
+from scipy.special import eval_legendre
+import pandas as pd
+import io
+import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application, convert_xor
 
 # ==========================================
-# 頁面設定
+# 1. 全域頁面設定與初始化
 # ==========================================
-st.set_page_config(
-    page_title="3D 電位分佈模擬器",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="電磁學生成小教室", layout="wide", page_icon="⚡")
 
-# CSS 樣式優化
+# CSS 美化
 st.markdown("""
-    <style>
+<style>
+    .main-header {font-size: 2.5rem; color: #1E88E5; text-align: center; margin-bottom: 1rem;}
+    .stSlider {padding-top: 20px;}
+    div.stButton > button:first-child {border-radius: 8px;}
     .stMetric {
         background-color: #f0f2f6;
         padding: 10px;
         border-radius: 10px;
     }
-    </style>
-    """, unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
+
+# 初始化 Session State
+default_states = {
+    'fourier_result': None,
+    'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}],
+    'legendre_coeffs': None,
+    'legendre_func': None
+}
+
+for key, val in default_states.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
 
 # ==========================================
-# 核心物理引擎 (使用快取加速)
+# 2. 核心運算函數 (通用與 2D)
 # ==========================================
+
+def get_safe_math_scope(x_val=None):
+    """建立安全的數學運算命名空間"""
+    scope = {
+        "np": np, "signal": signal, "special": special,
+        "sin": np.sin, "cos": np.cos, "tan": np.tan,
+        "exp": np.exp, "pi": np.pi, "abs": np.abs, 
+        "sqrt": np.sqrt, "log": np.log, "sign": np.sign,
+        "maximum": np.maximum, "minimum": np.minimum,
+        "square": signal.square, "sawtooth": signal.sawtooth,
+        "gamma": special.gamma, "sinh": np.sinh, "cosh": np.cosh,
+        "where": np.where, "heaviside": np.heaviside,
+        "arcsin": np.arcsin, "arccos": np.arccos, "arctan": np.arctan,
+        "legendre": eval_legendre
+    }
+    if x_val is not None:
+        scope["x"] = x_val
+    return scope
+
+def eval_func(func_str, x_val):
+    scope = get_safe_math_scope(x_val)
+    try:
+        return eval(func_str, {"__builtins__": None}, scope)
+    except Exception:
+        if hasattr(x_val, "__len__"):
+            return np.array([eval(func_str, {"__builtins__": None}, get_safe_math_scope(xi)) for xi in x_val])
+        return np.nan
+
+def smart_parse(input_str):
+    if not input_str or input_str.strip() == "0": return None
+    transformations = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
+    try:
+        return parse_expr(input_str, transformations=transformations, local_dict={'e': sp.E, 'pi': sp.pi})
+    except:
+        return None
+
+# --- 2D 快取運算 ---
 @st.cache_data(show_spinner=False)
-def calculate_potential(N, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance):
-    """
-    使用有限差分法 (Relaxation Method) 求解 3D Laplace 方程式
-    
-    Args:
-        N (int): 網格大小 (N x N x N)
-        v_top, v_bottom... (float): 各個面的邊界電位
-        max_iter (int): 最大迭代次數
-        tolerance (float): 收斂容許誤差
-    """
-    # 1. 初始化網格 (全零)
+def calculate_fourier_coefficients(func_str, a, b, max_n):
+    L = b - a
+    if L <= 0: return None, "區間錯誤：b 必須大於 a"
+    omega = 2 * np.pi / L
+    A_coeffs, B_coeffs = [], []
+    try:
+        val_a0, _ = quad(lambda x: eval_func(func_str, x), a, b, limit=200)
+        A_coeffs.append((2.0 / L) * val_a0)
+        B_coeffs.append(0.0)
+        for n in range(1, max_n + 1):
+            val_an, _ = quad(lambda x: eval_func(func_str, x) * np.cos(n * omega * x), a, b, limit=100)
+            val_bn, _ = quad(lambda x: eval_func(func_str, x) * np.sin(n * omega * x), a, b, limit=100)
+            A_coeffs.append((2.0 / L) * val_an)
+            B_coeffs.append((2.0 / L) * val_bn)
+        x_vals = np.linspace(a, b, 1000)
+        y_original = eval_func(func_str, x_vals)
+        return {"A": A_coeffs, "B": B_coeffs, "omega": omega, "x_vals": x_vals, "y_original": y_original, "range": (a, b)}, None
+    except Exception as e:
+        return None, f"運算錯誤: {str(e)}"
+
+@st.cache_data(show_spinner=False)
+def calculate_legendre_coefficients(func_expression, max_n):
+    try: _ = eval_func(func_expression, 0.5)
+    except Exception as e: return None, None, f"語法解析錯誤: {str(e)}"
+    coeffs = []
+    try:
+        for n in range(max_n + 1):
+            factor = (2 * n + 1) / 2
+            integrand = lambda x: eval_func(func_expression, x) * eval_legendre(n, x)
+            val, _ = quad(integrand, -1, 1, limit=100)
+            coeffs.append(factor * val)
+        return coeffs, None, None
+    except Exception as e: return None, None, f"積分錯誤: {str(e)}"
+
+@st.cache_data(show_spinner=False)
+def calculate_point_charge_potential(charges_tuple, grid_size=100):
+    charges = list(charges_tuple)
+    x = np.linspace(-5, 5, grid_size)
+    y = np.linspace(-5, 5, grid_size)
+    X, Y = np.meshgrid(x, y)
+    V_total = np.zeros_like(X)
+    if not charges: return X, Y, V_total
+    for charge in charges:
+        q = charge['q']; x0 = charge['x']; y0 = charge['y']
+        r = np.sqrt((X - x0)**2 + (Y - y0)**2)
+        V_total += q / (r + 1e-9) 
+    return X, Y, V_total
+
+def plot_heatmap(data, title, xlabel="x", ylabel="y"):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(data, cmap='jet', origin='lower', extent=[0, 1, 0, 1], aspect='auto', interpolation='bilinear')
+    plt.colorbar(im, ax=ax).set_label('Potential (V)')
+    ax.set_title(title); ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+    fig.tight_layout()
+    return fig
+
+# ==========================================
+# 3. 3D 核心運算函數 (新增部分)
+# ==========================================
+
+@st.cache_data(show_spinner=False)
+def calculate_potential_3d(N, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance):
+    """使用有限差分法求解 3D Laplace 方程式"""
     V = np.zeros((N, N, N))
     
-    # 2. 設定邊界條件遮罩 (Boundary Mask)
-    # 用來確保在迭代過程中，邊界值不會被改變
-    mask = np.zeros((N, N, N), dtype=bool)
-    
-    # 設定各個面的電位與遮罩
+    # 設定邊界條件
     # Z軸 (Top/Bottom)
-    V[:, :, -1] = v_top;    mask[:, :, -1] = True
-    V[:, :, 0]  = v_bottom; mask[:, :, 0]  = True
-    
-    # Y軸 (Front/Back)
-    V[:, -1, :] = v_back;   mask[:, -1, :] = True
-    V[:, 0, :]  = v_front;  mask[:, 0, :]  = True
-    
+    V[:, :, -1] = v_top
+    V[:, :, 0]  = v_bottom
+    # Y軸 (Back/Front)
+    V[:, -1, :] = v_back
+    V[:, 0, :]  = v_front
     # X軸 (Right/Left)
-    V[-1, :, :] = v_right;  mask[-1, :, :] = True
-    V[0, :, :]  = v_left;   mask[0, :, :]  = True
+    V[-1, :, :] = v_right
+    V[0, :, :]  = v_left
 
-    # 3. 迭代求解 (使用 NumPy 向量化加速)
-    # V_new = (V_x+1 + V_x-1 + V_y+1 + V_y-1 + V_z+1 + V_z-1) / 6
-    
+    # 迭代求解 (Vectorized Relaxation)
     for i in range(max_iter):
         V_old = V.copy()
-        
-        # 核心計算：只更新內部點 (1:-1)
+        # 核心計算：只更新內部點 [1:-1]
         V[1:-1, 1:-1, 1:-1] = (1/6) * (
-            V[2:, 1:-1, 1:-1] + V[:-2, 1:-1, 1:-1] +  # X 方向鄰居
-            V[1:-1, 2:, 1:-1] + V[1:-1, :-2, 1:-1] +  # Y 方向鄰居
-            V[1:-1, 1:-1, 2:] + V[1:-1, 1:-1, :-2]    # Z 方向鄰居
+            V[2:, 1:-1, 1:-1] + V[:-2, 1:-1, 1:-1] +  # X neighbor
+            V[1:-1, 2:, 1:-1] + V[1:-1, :-2, 1:-1] +  # Y neighbor
+            V[1:-1, 1:-1, 2:] + V[1:-1, 1:-1, :-2]    # Z neighbor
         )
         
-        # 強制重置邊界條件 (雖然上面的切片未觸及邊界，但為求穩健仍加上邏輯或使用mask)
-        # 由於上面只更新內部 [1:-1]，邊界其實未被更動，故此處省略顯式重置以節省效能
+        # 強制重置邊界 (確保邊界值不被改變)
+        V[:, :, -1] = v_top; V[:, :, 0] = v_bottom
+        V[:, -1, :] = v_back; V[:, 0, :] = v_front
+        V[-1, :, :] = v_right; V[0, :, :] = v_left
         
-        # 每 200 次檢查一次收斂性 (減少 np.max 的呼叫次數以提升效能)
+        # 收斂檢查
         if i % 200 == 0:
             diff = np.max(np.abs(V - V_old))
             if diff < tolerance:
                 break
     
-    # 建立座標網格 (用於 Plotly 繪圖)
-    # linspace 產生 0 到 1 之間的座標
     grid_range = np.linspace(0, 1, N)
     X, Y, Z = np.meshgrid(grid_range, grid_range, grid_range, indexing='ij')
-    
-    return X, Y, Z, V, i  # 回傳座標, 電位矩陣, 實際迭代次數
+    return X, Y, Z, V, i
 
-# ==========================================
-# 視覺化邏輯
-# ==========================================
 def create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     """建立 Plotly 3D Isosurface 圖表"""
-    
     fig = go.Figure(data=go.Isosurface(
         x=X.flatten(),
         y=Y.flatten(),
@@ -100,10 +193,10 @@ def create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps):
         value=V.flatten(),
         isomin=np.min(V),
         isomax=np.max(V),
-        surface_count=surface_count, # 等位面層數
-        opacity=opacity,             # 透明度
+        surface_count=surface_count,
+        opacity=opacity,
         caps=dict(x_show=show_caps, y_show=show_caps, z_show=show_caps),
-        colorscale='RdBu_r',         # 紅藍色階 (紅=高電位)
+        colorscale='RdBu_r',
         colorbar=dict(title='電位 (V)'),
         hoverinfo='all'
     ))
@@ -114,9 +207,9 @@ def create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps):
             xaxis_title='X 軸',
             yaxis_title='Y 軸',
             zaxis_title='Z 軸',
-            aspectmode='cube', # 保持正立方體比例
+            aspectmode='cube',
             camera=dict(
-                eye=dict(x=1.5, y=1.5, z=1.5) # 預設視角
+                eye=dict(x=1.5, y=1.5, z=1.5)
             )
         ),
         margin=dict(l=0, r=0, b=0, t=40),
@@ -125,88 +218,339 @@ def create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     return fig
 
 # ==========================================
-# 主應用程式介面
+# 4. 頁面渲染邏輯 (Rendering)
 # ==========================================
-def main():
-    # --- 標題區 ---
-    st.title("⚡ 3D 靜電場視覺化：笛卡兒座標")
+
+def render_home():
+    st.markdown("<h1 class='main-header'>⚡ 電磁學生成小教室 ⚡</h1>", unsafe_allow_html=True)
     st.markdown("""
-    本應用程式使用 **有限差分法 (Finite Difference Method)** 解算 Laplace 方程式 $\\nabla^2 V = 0$。
-    您可以設定立方體六個面的邊界電位，並觀察內部的電位分佈。
+    ### 歡迎來到互動學習實驗室！
+    請從左側選單選擇您想要探索的主題：
+    * **函數近似**：傅立葉級數、勒讓德多項式。
+    * **電位+電場模擬 (2D)**：經典的 2D 切面模擬。
+    * **電位+電場模擬 (3D)**：**NEW!** 互動式 3D 空間電位模擬。
+    👈 **請點擊左上角箭頭打開側邊欄！**
     """)
 
-    # --- 側邊欄：參數控制 ---
-    with st.sidebar:
-        st.header("⚙️ 設定與參數")
-        
-        st.subheader("1. 網格精細度")
-        grid_n = st.slider("網格點數 (N)", 10, 60, 40, help="數值越大越平滑，但計算越慢。建議 30-50。")
-        
-        st.subheader("2. 邊界電位 (V)")
-        with st.expander("設定六面電位", expanded=True):
-            col_z = st.columns(2)
-            v_top = col_z[0].number_input("頂面 (Z=1)", value=100.0, step=10.0)
-            v_bottom = col_z[1].number_input("底面 (Z=0)", value=-100.0, step=10.0)
-            
-            col_y = st.columns(2)
-            v_back = col_y[0].number_input("後面 (Y=1)", value=0.0, step=10.0)
-            v_front = col_y[1].number_input("前面 (Y=0)", value=0.0, step=10.0)
-            
-            col_x = st.columns(2)
-            v_right = col_x[0].number_input("右面 (X=1)", value=0.0, step=10.0)
-            v_left = col_x[1].number_input("左面 (X=0)", value=0.0, step=10.0)
+def render_developing(title):
+    st.subheader(f"🚧 {title}")
+    st.info("此功能目前正在開發中，敬請期待！")
 
-        st.subheader("3. 求解參數")
-        max_iter = st.number_input("最大迭代次數", value=3000, step=500)
-        tolerance = st.select_slider("收斂精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4)
+# --- 2D 函數與模擬 ---
+def render_fourier_page():
+    st.subheader("📈 傅立葉級數近似")
+    fourier_examples = {
+        "自訂輸入": "", "方波": "square(x)", "多週期方波": "square(3 * x)", "鋸齒波": "sawtooth(x)", 
+        "三角波": "sawtooth(x, 0.5)", "全波整流": "abs(sin(x))", "半波整流": "maximum(sin(x), 0)", "脈衝波": "square(x, duty=0.2)"
+    }
+    def update_fourier():
+        if st.session_state.fourier_preset != "自訂輸入":
+            st.session_state.fourier_input = fourier_examples[st.session_state.fourier_preset]
+            
+    st.sidebar.markdown("---")
+    st.sidebar.selectbox("選擇預設波形", list(fourier_examples.keys()), key='fourier_preset', on_change=update_fourier)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: func_str = st.text_input("函數 f(x)", value="square(x)", key="fourier_input") 
+    with c2: a = st.number_input("起點 a", -3.1415)
+    with c3: b = st.number_input("終點 b", 3.1415)
+    with c4: max_n = st.number_input("最大項數", 50, step=10)
+
+    if st.button("🚀 計算", use_container_width=True):
+        with st.spinner("運算中..."):
+            result, error = calculate_fourier_coefficients(func_str, a, b, int(max_n))
+            if error: st.error(error)
+            else: st.session_state['fourier_result'] = result
+
+    if st.session_state['fourier_result']:
+        res = st.session_state['fourier_result']
+        st.divider()
+        current_n = st.slider("調整 N 值 (疊加項數)", 0, len(res["A"])-1, min(10, len(res["A"])-1))
+        n_indices = np.arange(1, current_n + 1)
+        A_terms = np.array(res["A"][1:current_n+1]).reshape(-1, 1)
+        B_terms = np.array(res["B"][1:current_n+1]).reshape(-1, 1)
+        k_omega_x = res["omega"] * np.outer(n_indices, res["x_vals"])
+        y_approx = res["A"][0]/2 + np.sum(A_terms * np.cos(k_omega_x) + B_terms * np.sin(k_omega_x), axis=0)
+        
+        fig, ax = plt.subplots(figsize=(10, 4))
+        if res["y_original"] is not None: ax.plot(res["x_vals"], res["y_original"], 'k-', alpha=0.3, label='Original')
+        ax.plot(res["x_vals"], y_approx, 'b-', linewidth=2, label=f'N={current_n}')
+        ax.legend(); ax.grid(True, alpha=0.3)
+        st.pyplot(fig); plt.close(fig)
+        
+        # 資料下載
+        df = pd.DataFrame({"n": range(len(res["A"])), "An": res["A"], "Bn": res["B"]})
+        c1, c2 = st.columns(2)
+        buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150); buf.seek(0)
+        c1.download_button("📥 下載圖表", buf, "fourier.png", "image/png", use_container_width=True)
+        c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", use_container_width=True)
+        with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
+
+def render_legendre_page():
+    st.subheader("🌊 勒讓德級數近似")
+    legendre_examples = {
+        "自訂輸入": "", "方波": "where(x > 0, 1, 0)", "三角波": "where(x > 0, x, 0)", "絕對值": "abs(x)",
+        "多週期方波": "sign(sin(4 * pi * x))", "波包": "sin(15 * x) * exp(-5 * x**2)", "全波整流": "abs(sin(3 * pi * x))",
+        "AM 調變": "(1 + 0.5 * cos(10 * x)) * cos(50 * x)", "偶極子": "x", "四極子": "3*x**2 - 1"
+    }
+    def update_legendre():
+        if st.session_state.legendre_preset != "自訂輸入":
+            st.session_state.legendre_input = legendre_examples[st.session_state.legendre_preset]
+    st.sidebar.markdown("---")
+    st.sidebar.selectbox("選擇波形", list(legendre_examples.keys()), key='legendre_preset', on_change=update_legendre)
+    c1, c2 = st.columns([3, 1])
+    with c1: func_str = st.text_input("輸入 f(x)", value="where(x > 0, 1, 0)", key="legendre_input")
+    with c2: max_N = st.number_input("最大階數", 20)
+
+    if st.button("🚀 運算", use_container_width=True):
+        with st.spinner("積分中..."):
+            coeffs, _, error = calculate_legendre_coefficients(func_str, int(max_N))
+            if error: st.error(error)
+            else: st.session_state['legendre_coeffs'] = coeffs; st.session_state['legendre_func'] = func_str
+
+    if 'legendre_coeffs' in st.session_state and st.session_state['legendre_coeffs']:
+        coeffs = st.session_state['legendre_coeffs']
+        func_expr = st.session_state.get('legendre_func', func_str)
+        st.divider()
+        current_n = st.slider("疊加階數", 0, len(coeffs)-1, len(coeffs)-1)
+        x = np.linspace(-1, 1, 400)
+        y_target = eval_func(func_expr, x)
+        y_approx = sum(coeffs[n] * eval_legendre(n, x) for n in range(current_n + 1))
+        
+        fig = plt.figure(figsize=(12, 5))
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax1.plot(x, y_target, 'k--', alpha=0.5, label="Target"); ax1.plot(x, y_approx, 'r-', linewidth=2, label="Approx")
+        ax1.set_title("Cartesian (x vs f(x))"); ax1.set_xlabel("x = cos(theta)"); ax1.legend(); ax1.grid(True, alpha=0.3)
+        
+        ax2 = fig.add_subplot(1, 2, 2, projection='polar')
+        theta = np.linspace(0, 2*np.pi, 400)
+        r_target_polar = eval_func(func_expr, np.cos(theta))
+        r_approx = sum(coeffs[n] * eval_legendre(n, np.cos(theta)) for n in range(current_n + 1))
+        ax2.plot(theta, np.abs(r_target_polar), 'k--', alpha=0.5, label='Target')
+        ax2.plot(theta, np.abs(r_approx), 'r-', linewidth=2, label='Approx')
+        ax2.set_title("Polar (Abs magnitude)"); ax2.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+        st.pyplot(fig); plt.close(fig)
+        
+        df = pd.DataFrame({"n": range(len(coeffs)), "cn": coeffs})
+        c1, c2 = st.columns(2)
+        buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150); buf.seek(0)
+        c1.download_button("📥 下載圖表", buf, "legendre.png", "image/png", use_container_width=True)
+        c2.download_button("📥 下載係數", df.to_csv(index=False).encode(), "coeffs.csv", "text/csv", use_container_width=True)
+        with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
+
+def render_potential_point_charge():
+    st.subheader("⚡ 點電荷電位與電場模擬 (2D)")
+    st.sidebar.markdown("---"); st.sidebar.header("🔋 電荷控制")
+    c1, c2 = st.sidebar.columns(2)
+    new_q = c1.number_input("電荷量 (q)", value=1.0, step=0.5)
+    c3, c4 = st.sidebar.columns(2)
+    new_x = c3.number_input("X 座標", value=0.0, step=0.5, min_value=-5.0, max_value=5.0)
+    new_y = c4.number_input("Y 座標", value=0.0, step=0.5, min_value=-5.0, max_value=5.0)
+    if st.sidebar.button("➕ 加入電荷", use_container_width=True): st.session_state.point_charges.append({'q': new_q, 'x': new_x, 'y': new_y})
+    if st.sidebar.button("🗑️ 清除所有", use_container_width=True): st.session_state.point_charges = []
+    st.sidebar.divider()
+    if st.session_state.point_charges:
+        for i, c in enumerate(st.session_state.point_charges): st.sidebar.text(f"{i+1}. q={c['q']}, ({c['x']}, {c['y']})")
+    show_streamlines = st.sidebar.checkbox("顯示流線", value=True)
+    grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
+
+    if st.session_state.point_charges:
+        charges_tuple = tuple(st.session_state.point_charges)
+        X, Y, V = calculate_point_charge_potential(charges_tuple, grid_res)
+        fig, ax = plt.subplots(figsize=(10, 8))
+        contour = ax.contourf(X, Y, V, levels=50, cmap='RdBu_r', extend='both')
+        ax.contour(X, Y, V, levels=50, colors='k', linewidths=0.5, alpha=0.4)
+        if show_streamlines:
+            Ey, Ex = np.gradient(-V); mag = np.sqrt(Ex**2 + Ey**2); Ex = np.where(mag > 0, Ex, 0); Ey = np.where(mag > 0, Ey, 0)
+            ax.streamplot(X, Y, Ex, Ey, color='#444444', density=1.2, linewidth=0.6, arrowsize=1)
+        for charge in st.session_state.point_charges:
+            col = '#d62728' if charge['q'] > 0 else '#1f77b4'; sign = '+' if charge['q'] > 0 else '-'
+            ax.plot(charge['x'], charge['y'], marker='o', color=col, markersize=15, markeredgecolor='black')
+            ax.text(charge['x'], charge['y'], sign, color='white', ha='center', va='center', fontweight='bold')
+        ax.set_aspect('equal'); ax.set_title("Electric Potential Landscape"); fig.colorbar(contour, ax=ax)
+        st.pyplot(fig); plt.close(fig)
+    else: st.warning("請在左側加入電荷")
+
+def render_laplace_cartesian_2d():
+    st.subheader("🔲 電位模擬 - 笛卡爾座標 (2D)")
+    mode = st.radio("模式", ["數值解 (FDM)", "解析解"], horizontal=True)
+    if mode == "數值解 (FDM)":
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.markdown("##### 邊界條件")
+            def inp(l, d):
+                inf = st.checkbox(f"{l} 接地/無窮", key=f"i_{l}")
+                return (True, 0.0) if inf else (False, st.number_input(f"{l} V", float(d), key=f"v_{l}"))
+            ti, tv = inp("上", 10.0); bi, bv = inp("下", 0.0); li, lv = inp("左", 0.0); ri, rv = inp("右", 0.0)
+            iters = st.slider("迭代", 500, 5000, 2000)
+        with c2:
+            if st.button("模擬", use_container_width=True):
+                sz=40; pad=sz*3; th=(pad if ti else 0)+sz+(pad if bi else 0); tw=(pad if li else 0)+sz+(pad if ri else 0)
+                V = np.zeros((th, tw)); rs=pad if bi else 0; re=rs+sz; cs=pad if li else 0; ce=cs+sz
+                if not ti: V[re-1, cs:ce]=tv
+                if not bi: V[rs, cs:ce]=bv
+                if not li: V[rs:re, cs]=lv
+                if not ri: V[rs:re, ce-1]=rv
+                p = st.progress(0)
+                for i in range(iters):
+                    V_old=V.copy(); V[1:-1,1:-1]=0.25*(V_old[0:-2,1:-1]+V_old[2:,1:-1]+V_old[1:-1,0:-2]+V_old[1:-1,2:])
+                    if not ti: V[re-1, cs:ce]=tv
+                    if not bi: V[rs, cs:ce]=bv
+                    if not li: V[rs:re, cs]=lv
+                    if not ri: V[rs:re, ce-1]=rv
+                    if i%(iters//10)==0: p.progress((i+1)/iters)
+                p.progress(1.0); st.pyplot(plot_heatmap(V[rs:re, cs:ce], "FDM Result"))
+    else:
+        st.info("輸入支援 Python 語法")
+        c1, c2 = st.columns(2)
+        ts = c1.text_input("V(x,1)", "10"); bs = c1.text_input("V(x,0)", "0"); ls = c2.text_input("V(0,y)", "0"); rs = c2.text_input("V(1,y)", "0")
+        if st.button("計算"):
+            x,y,n=sp.symbols('x y n'); pi=sp.pi; terms=[]
+            def calc(s, sd):
+                ex=smart_parse(s); 
+                if not ex: return None
+                integrand=ex.subs(x if sd in ['top','bottom'] else y, x)
+                try: An=2*sp.integrate(integrand*sp.sin(n*pi*x),(x,0,1))
+                except: return None
+                den=sp.sinh(n*pi)
+                if sd=='top': return An*sp.sin(n*pi*x)*sp.sinh(n*pi*y)/den
+                if sd=='bottom': return An*sp.sin(n*pi*x)*sp.sinh(n*pi*(1-y))/den
+                if sd=='left': return An*sp.sin(n*pi*y)*sp.sinh(n*pi*(1-x))/den
+                if sd=='right': return An*sp.sin(n*pi*y)*sp.sinh(n*pi*x)/den
+            for s,sd in [(ts,'top'),(bs,'bottom'),(ls,'left'),(rs,'right')]:
+                r=calc(s,sd); 
+                if r: terms.append(r)
+            if terms:
+                Vt=sum(terms); st.latex(f"V(x,y) = {sp.latex(Vt)}")
+                X,Y=np.meshgrid(np.linspace(0,1,50),np.linspace(0,1,50)); Vn=np.zeros_like(X)
+                try:
+                    fn=sp.lambdify((n,x,y),Vt,'numpy'); p=st.progress(0)
+                    for i in range(1,21): Vn+=np.nan_to_num(fn(i,X,Y)); p.progress(i/20)
+                    st.pyplot(plot_heatmap(Vn, "Analytical Solution"))
+                except Exception as e: st.error(e)
+
+def render_potential_spherical_2d():
+    st.subheader("🌐 2D 極座標/球座標切面電位分析")
+    PRESETS = {
+        "點電荷": "k/r", 
+        "電偶極": "k*cos(theta)/r^2", 
+        "電四極": "k*(3*cos(theta)**2 - 1)/r^3",
+        "均勻電場": "-k*r*cos(theta)",
+        "複雜組合": "k/r + r*cos(theta)"
+    }
+    sel = st.sidebar.selectbox("選擇模型", list(PRESETS.keys()), index=1, key="sp2d")
+    user_input = st.sidebar.text_input("輸入 V(r, theta)", value=PRESETS[sel])
+    rmax = st.sidebar.slider("範圍", 1.0, 10.0, 5.0)
+    grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
+    show_lines = st.sidebar.checkbox("顯示流線", True)
+
+    if user_input:
+        try:
+            r, theta, k = sp.symbols('r theta k', real=True)
+            trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
+            V_expr = parse_expr(user_input, local_dict={'k':k, 'pi':sp.pi, 'r':r, 'theta':theta}, transformations=trans)
+            E_r = -sp.diff(V_expr, r); E_theta = -(1/r)*sp.diff(V_expr, theta)
+            
+            c1, c2 = st.columns(2)
+            c1.latex(f"V={sp.latex(V_expr)}")
+            c2.latex(f"\\vec{{E}}=({sp.latex(E_r)})\\hat{{r}} + ({sp.latex(E_theta)})\\hat{{\\theta}}")
+            
+            func_V = sp.lambdify((r, theta), V_expr.subs(k, 1), 'numpy')
+            func_Er = sp.lambdify((r, theta), E_r.subs(k, 1), 'numpy')
+            func_Et = sp.lambdify((r, theta), E_theta.subs(k, 1), 'numpy')
+            
+            x_vals = np.linspace(-rmax, rmax, grid_res); X, Y = np.meshgrid(x_vals, x_vals)
+            R = np.sqrt(X**2 + Y**2); THETA = np.arctan2(Y, X); R[R<1e-3]=1e-3
+            Z_V = func_V(R, THETA)
+            if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
+            
+            fig, ax = plt.subplots(figsize=(8, 7))
+            try:
+                contour = ax.contourf(X, Y, Z_V, levels=50, cmap='jet'); plt.colorbar(contour, ax=ax, label='V')
+            except: st.warning("數值範圍過大，無法繪製")
+
+            if show_lines:
+                U_Er = func_Er(R, THETA); U_Et = func_Et(R, THETA)
+                if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
+                if np.isscalar(U_Et): U_Et = np.full_like(R, U_Et)
+                Ex = U_Er*np.cos(THETA) - U_Et*np.sin(THETA); Ey = U_Er*np.sin(THETA) + U_Et*np.cos(THETA)
+                ax.streamplot(X, Y, np.nan_to_num(Ex), np.nan_to_num(Ey), color=(1,1,1,0.5), linewidth=0.8)
+            
+            ax.set_aspect('equal'); st.pyplot(fig); plt.close(fig)
+        except Exception as e: st.error(f"Error: {e}")
+
+# ==========================================
+# 5. 3D 渲染邏輯 (NEW!)
+# ==========================================
+
+def render_3d_cartesian():
+    st.subheader("🧊 3D 靜電場視覺化：笛卡爾座標")
+    st.markdown("使用有限差分法求解 $\\nabla^2 V = 0$。設定六個面的邊界電位，觀察內部分佈。")
+
+    with st.sidebar:
+        st.markdown("---")
+        st.header("⚙️ 3D 參數設定")
+        grid_n = st.slider("網格點數 (N)", 10, 60, 40)
+        
+        with st.expander("設定邊界電位 (Boundary)", expanded=True):
+            c1, c2 = st.columns(2)
+            v_top = c1.number_input("頂面 (Z=1)", 100.0, step=10.0)
+            v_bottom = c2.number_input("底面 (Z=0)", -100.0, step=10.0)
+            v_back = c1.number_input("後面 (Y=1)", 0.0, step=10.0)
+            v_front = c2.number_input("前面 (Y=0)", 0.0, step=10.0)
+            v_right = c1.number_input("右面 (X=1)", 0.0, step=10.0)
+            v_left = c2.number_input("左面 (X=0)", 0.0, step=10.0)
+
+        max_iter = st.number_input("最大迭代", 3000, step=500)
+        tolerance = st.select_slider("精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4)
         
         st.divider()
-        st.markdown("### 👁️ 視覺化選項")
         surface_count = st.slider("等位面層數", 3, 20, 10)
         opacity = st.slider("透明度", 0.1, 1.0, 0.3)
-        show_caps = st.checkbox("顯示切面封蓋 (Caps)", value=False, help="開啟後等位面會封閉，關閉則像洋蔥圈便於透視")
+        show_caps = st.checkbox("顯示封蓋 (Caps)", False)
 
-    # --- 主邏輯執行 ---
-    
-    # 計算觸發
-    with st.spinner(f'正在進行物理運算 (網格: {grid_n}x{grid_n}x{grid_n})...'):
+    # 計算
+    with st.spinner(f'3D 物理運算中 (網格: {grid_n}^3)...'):
         start_time = time.time()
-        X, Y, Z, V, actual_iter = calculate_potential(
+        X, Y, Z, V, actual_iter = calculate_potential_3d(
             grid_n, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance
         )
         end_time = time.time()
 
-    # --- 結果顯示區 ---
-    
-    # 1. 統計數據 Metrics
-    st.markdown("### 📊 模擬結果統計")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("最高電位", f"{np.max(V):.1f} V")
-    col2.metric("最低電位", f"{np.min(V):.1f} V")
-    col3.metric("中心點電位", f"{V[grid_n//2, grid_n//2, grid_n//2]:.1f} V")
-    col4.metric("計算耗時", f"{end_time - start_time:.3f} s", help=f"實際迭代: {actual_iter} 次")
+    # 顯示統計
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Max V", f"{np.max(V):.1f} V")
+    c2.metric("Min V", f"{np.min(V):.1f} V")
+    c3.metric("Center V", f"{V[grid_n//2, grid_n//2, grid_n//2]:.1f} V")
+    c4.metric("Time", f"{end_time - start_time:.3f} s", help=f"Iter: {actual_iter}")
 
-    # 2. Plotly 3D 圖表
-    st.divider()
+    # 繪圖
     fig = create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps)
     st.plotly_chart(fig, use_container_width=True)
-    
-    # 3. 物理原理說明
-    with st.expander("📚 物理與數學背景"):
-        st.markdown(r"""
-        #### 1. 拉普拉斯方程式 (Laplace's Equation)
-        在無電荷區域 ($\rho=0$)，靜電位 $V$ 滿足：
-        $$
-        \nabla^2 V = \frac{\partial^2 V}{\partial x^2} + \frac{\partial^2 V}{\partial y^2} + \frac{\partial^2 V}{\partial z^2} = 0
-        $$
 
-        #### 2. 數值解法 (Numerical Solution)
-        我們將空間離散化為網格點 $(i, j, k)$。根據平均值定理，若網格夠小，任一點的電位約等於其六個相鄰點的平均值：
-        $$
-        V_{i,j,k} \approx \frac{1}{6} (V_{i+1,j,k} + V_{i-1,j,k} + V_{i,j+1,k} + V_{i,j-1,k} + V_{i,j,k+1} + V_{i,j,k-1})
-        $$
-        程式透過不斷重複這個平均化過程 (Relaxation)，直到數值不再變動 (收斂)，即可得到最終的電位分佈。
-        """)
+# ==========================================
+# 6. 主導航邏輯
+# ==========================================
+st.sidebar.title("⚡ 導航選單")
+cat = st.sidebar.selectbox("選擇模組", [
+    "首頁", 
+    "函數近似", 
+    "電位+電場模擬 (2D)", 
+    "電位+電場模擬 (3D)"
+])
 
-if __name__ == "__main__":
-    main()
+if cat == "首頁": 
+    render_home()
+elif cat == "函數近似":
+    sub = st.sidebar.radio("方法", ["傅立葉近似", "勒讓德近似"])
+    if sub == "傅立葉近似": render_fourier_page()
+    else: render_legendre_page()
+elif cat == "電位+電場模擬 (2D)":
+    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
+    if sub == "笛卡爾": render_laplace_cartesian_2d()
+    elif sub == "球座標": render_potential_spherical_2d()
+    elif sub == "點電荷": render_potential_point_charge()
+elif cat == "電位+電場模擬 (3D)":
+    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
+    if sub == "笛卡爾": render_3d_cartesian()
+    elif sub == "球座標": render_developing("3D 球座標模擬")
+    elif sub == "點電荷": render_developing("3D 點電荷模擬")
