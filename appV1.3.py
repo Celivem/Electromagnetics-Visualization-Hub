@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors # 新增：用於處理顏色映射
+import matplotlib.colors as mcolors
 import plotly.graph_objects as go
 import time
 from scipy.integrate import quad
@@ -28,7 +28,6 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
     }
-    /* 調整 Plotly 圖表容器的邊距 */
     .main .block-container {
         padding-top: 2rem;
     }
@@ -203,7 +202,7 @@ def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
 
     return X, Y, Z, V, Ex, Ey, Ez
 
-# --- 3D 視覺化 (改良版：分組渲染法) ---
+# --- 3D 視覺化 (分組渲染法) ---
 
 def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     """繪製 3D 電位等位面"""
@@ -227,8 +226,8 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
 
 def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
     """
-    繪製 3D 電場 (固定大小，顏色代表強弱)
-    技術：使用 Binning 將向量分組，分別賦予單一顏色，以繞過 go.Cone 的限制。
+    繪製 3D 電場 (完全固定大小，顏色代表強弱)
+    技術：使用 Binning 分組策略繞過 go.Cone 的大小限制
     """
     # 1. 降採樣
     X_sub = X[::stride, ::stride, ::stride].flatten()
@@ -240,50 +239,42 @@ def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
     
     # 2. 計算強度與單位向量
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
-    # 避免除以零
-    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
-    U_norm = Ex_sub / E_mag_safe
-    V_norm = Ey_sub / E_mag_safe
-    W_norm = Ez_sub / E_mag_safe
+    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag) # 避免除以零
+    
+    # 關鍵：將所有向量歸一化，這樣 Plotly 畫出的箭頭長度就會完全一致
+    U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
+    V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
+    W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
 
     fig = go.Figure()
     
     # 3. 分組著色 (Binning)
-    # 將強度分為 N 個等級，每個等級畫一組箭頭
     n_bins = 20
-    cmap = plt.get_cmap('jet') # 使用 Jet (Rainbow like) 配色
-    
-    # 找出最大最小強度 (可以稍微 clip 避免極值影響配色)
-    vmin, vmax = np.percentile(E_mag, 5), np.percentile(E_mag, 95)
+    cmap = plt.get_cmap('jet') # 使用 Jet 彩虹配色
+    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98) # 去除極值影響配色
     bins = np.linspace(vmin, vmax, n_bins)
-    
-    # 決定每個點屬於哪個 bin
     indices = np.digitize(E_mag, bins) - 1
     indices = np.clip(indices, 0, n_bins - 1)
     
-    # 逐一繪製每個 Bin 的箭頭
     for i in range(n_bins):
         mask = (indices == i)
         if not np.any(mask): continue
-        
-        # 計算該 Bin 的代表色
         color_val = i / (n_bins - 1)
         hex_color = mcolors.to_hex(cmap(color_val))
         
         fig.add_trace(go.Cone(
             x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
-            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask], # 使用單位向量 -> 長度固定
-            colorscale=[[0, hex_color], [1, hex_color]],    # 強制單一顏色
+            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
+            colorscale=[[0, hex_color], [1, hex_color]], # 強制單一顏色
             showscale=False,
             sizemode="scaled",
-            sizeref=scale, # 使用者可調的固定大小
+            sizeref=scale, # 這裡的 scale 現在控制的是歸一化後的固定長度
             anchor="tail",
             hoverinfo='u+v+w+name',
-            name=f"E ~ {bins[i]:.1f}"
+            name=f"E ~ {bins[i]:.2e}"
         ))
 
-    # 4. 偽造 Colorbar (Invisible Scatter)
-    # 因為上面的 Cones 沒有色條，我們加一個隱形的 Scatter 來顯示正確的 Colorbar
+    # 4. 偽造 Colorbar
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
@@ -296,7 +287,7 @@ def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
     ))
 
     fig.update_layout(
-        title="3D 電場向量分佈 (Rainbow Color + Fixed Size)",
+        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
         margin=dict(l=0, r=0, b=0, t=40), height=700,
         showlegend=False
@@ -601,7 +592,8 @@ def render_3d_cartesian():
             show_caps = st.checkbox("顯示封蓋 (Caps)", False)
         else:
             st.info("💡 箭頭顏色代表強弱，大小固定。")
-            cone_scale = st.slider("箭頭大小係數", 0.1, 1.0, 0.4)
+            # 注意：笛卡爾座標範圍 0-1，箭頭大小需較小 (0.05 - 0.2)
+            cone_scale = st.slider("箭頭大小", 0.05, 0.2, 0.1)
             stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
 
     with st.spinner(f'3D 物理運算中...'):
@@ -674,7 +666,8 @@ def render_3d_point_charge():
             show_caps = st.checkbox("顯示封蓋", False)
         else:
             st.info("💡 箭頭顏色代表強弱，大小固定。")
-            cone_scale = st.slider("箭頭大小", 0.1, 2.0, 0.5)
+            # 注意：點電荷空間範圍較大 (-2.5 ~ 2.5)，箭頭大小需較大 (0.3 - 1.0)
+            cone_scale = st.slider("箭頭大小", 0.3, 1.0, 0.5)
             stride_val = st.slider("採樣間隔", 1, 3, 1)
 
     if not st.session_state.point_charges_3d:
