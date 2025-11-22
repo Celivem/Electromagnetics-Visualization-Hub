@@ -27,6 +27,10 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
     }
+    /* 調整 Plotly 圖表容器的邊距 */
+    .main .block-container {
+        padding-top: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -140,80 +144,99 @@ def plot_heatmap(data, title, xlabel="x", ylabel="y"):
     return fig
 
 # ==========================================
-# 3. 3D 核心運算函數 (新增部分)
+# 3. 3D 核心運算函數 (整合電場計算)
 # ==========================================
 
 @st.cache_data(show_spinner=False)
-def calculate_potential_3d(N, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance):
-    """使用有限差分法求解 3D Laplace 方程式"""
+def calculate_3d_physics(N, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance):
+    """
+    求解 3D Laplace 方程式並計算電場
+    Returns: X, Y, Z, V, Ex, Ey, Ez, actual_iter
+    """
+    # 1. 初始化
     V = np.zeros((N, N, N))
     
-    # 設定邊界條件
-    # Z軸 (Top/Bottom)
-    V[:, :, -1] = v_top
-    V[:, :, 0]  = v_bottom
-    # Y軸 (Back/Front)
-    V[:, -1, :] = v_back
-    V[:, 0, :]  = v_front
-    # X軸 (Right/Left)
-    V[-1, :, :] = v_right
-    V[0, :, :]  = v_left
+    # 設定邊界
+    V[:, :, -1] = v_top;    V[:, :, 0]  = v_bottom # Z
+    V[:, -1, :] = v_back;   V[:, 0, :]  = v_front  # Y
+    V[-1, :, :] = v_right;  V[0, :, :]  = v_left   # X
 
-    # 迭代求解 (Vectorized Relaxation)
+    # 2. 迭代求解電位 (Relaxation)
     for i in range(max_iter):
         V_old = V.copy()
-        # 核心計算：只更新內部點 [1:-1]
+        # 向量化計算：只更新內部點
         V[1:-1, 1:-1, 1:-1] = (1/6) * (
-            V[2:, 1:-1, 1:-1] + V[:-2, 1:-1, 1:-1] +  # X neighbor
-            V[1:-1, 2:, 1:-1] + V[1:-1, :-2, 1:-1] +  # Y neighbor
-            V[1:-1, 1:-1, 2:] + V[1:-1, 1:-1, :-2]    # Z neighbor
+            V[2:, 1:-1, 1:-1] + V[:-2, 1:-1, 1:-1] + 
+            V[1:-1, 2:, 1:-1] + V[1:-1, :-2, 1:-1] + 
+            V[1:-1, 1:-1, 2:] + V[1:-1, 1:-1, :-2]
         )
         
-        # 強制重置邊界 (確保邊界值不被改變)
+        # 邊界重置
         V[:, :, -1] = v_top; V[:, :, 0] = v_bottom
         V[:, -1, :] = v_back; V[:, 0, :] = v_front
         V[-1, :, :] = v_right; V[0, :, :] = v_left
-        
-        # 收斂檢查
+
         if i % 200 == 0:
             diff = np.max(np.abs(V - V_old))
             if diff < tolerance:
                 break
-    
+                
+    # 3. 計算電場 (E = -Gradient V)
+    h = 1.0 / (N - 1)
+    grads = np.gradient(V, h)
+    Ex, Ey, Ez = -grads[0], -grads[1], -grads[2]
+
+    # 4. 建立座標
     grid_range = np.linspace(0, 1, N)
     X, Y, Z = np.meshgrid(grid_range, grid_range, grid_range, indexing='ij')
-    return X, Y, Z, V, i
+    
+    return X, Y, Z, V, Ex, Ey, Ez, i
 
-def create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps):
-    """建立 Plotly 3D Isosurface 圖表"""
+def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
+    """繪製 3D 電位等位面"""
     fig = go.Figure(data=go.Isosurface(
-        x=X.flatten(),
-        y=Y.flatten(),
-        z=Z.flatten(),
+        x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
         value=V.flatten(),
-        isomin=np.min(V),
-        isomax=np.max(V),
+        isomin=np.min(V), isomax=np.max(V),
         surface_count=surface_count,
         opacity=opacity,
         caps=dict(x_show=show_caps, y_show=show_caps, z_show=show_caps),
         colorscale='RdBu_r',
-        colorbar=dict(title='電位 (V)'),
+        colorbar=dict(title='電位 V (Volts)'),
         hoverinfo='all'
     ))
-
     fig.update_layout(
-        title="3D 電位等位面分佈 (Isosurfaces)",
-        scene=dict(
-            xaxis_title='X 軸',
-            yaxis_title='Y 軸',
-            zaxis_title='Z 軸',
-            aspectmode='cube',
-            camera=dict(
-                eye=dict(x=1.5, y=1.5, z=1.5)
-            )
-        ),
-        margin=dict(l=0, r=0, b=0, t=40),
-        height=700,
+        title="3D 電位分佈 (Isosurfaces)",
+        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
+        margin=dict(l=0, r=0, b=0, t=40), height=700
+    )
+    return fig
+
+def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride):
+    """繪製 3D 電場向量"""
+    # 降採樣
+    X_sub = X[::stride, ::stride, ::stride].flatten()
+    Y_sub = Y[::stride, ::stride, ::stride].flatten()
+    Z_sub = Z[::stride, ::stride, ::stride].flatten()
+    Ex_sub = Ex[::stride, ::stride, ::stride].flatten()
+    Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
+    Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
+    
+    E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
+    
+    fig = go.Figure(data=go.Cone(
+        x=X_sub, y=Y_sub, z=Z_sub,
+        u=Ex_sub, v=Ey_sub, w=Ez_sub,
+        colorscale='Viridis',
+        cmin=np.min(E_mag), cmax=np.max(E_mag),
+        sizemode="scaled", sizeref=scale, anchor="tail",
+        colorbar=dict(title='電場強度 |E|'),
+        hoverinfo='u+v+w+norm'
+    ))
+    fig.update_layout(
+        title="3D 電場向量分佈 (Vectors)",
+        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
+        margin=dict(l=0, r=0, b=0, t=40), height=700
     )
     return fig
 
@@ -228,7 +251,7 @@ def render_home():
     請從左側選單選擇您想要探索的主題：
     * **函數近似**：傅立葉級數、勒讓德多項式。
     * **電位+電場模擬 (2D)**：經典的 2D 切面模擬。
-    * **電位+電場模擬 (3D)**：**NEW!** 互動式 3D 空間電位模擬。
+    * **電位+電場模擬 (3D)**：**NEW!** 互動式 3D 空間電位與電場模擬。
     👈 **請點擊左上角箭頭打開側邊欄！**
     """)
 
@@ -277,7 +300,6 @@ def render_fourier_page():
         ax.legend(); ax.grid(True, alpha=0.3)
         st.pyplot(fig); plt.close(fig)
         
-        # 資料下載
         df = pd.DataFrame({"n": range(len(res["A"])), "An": res["A"], "Bn": res["B"]})
         c1, c2 = st.columns(2)
         buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150); buf.seek(0)
@@ -486,10 +508,19 @@ def render_3d_cartesian():
     st.subheader("🧊 3D 靜電場視覺化：笛卡爾座標")
     st.markdown("使用有限差分法求解 $\\nabla^2 V = 0$。設定六個面的邊界電位，觀察內部分佈。")
 
+    # 1. 側邊欄參數
     with st.sidebar:
         st.markdown("---")
-        st.header("⚙️ 3D 參數設定")
-        grid_n = st.slider("網格點數 (N)", 10, 60, 40)
+        # --- 模式切換 (放在側邊欄以符合您提供的範例風格，也可移至主畫面) ---
+        viz_mode = st.radio(
+            "選擇視覺化模式",
+            ["電位分佈 (Potential)", "電場向量 (Electric Field)"],
+            index=0
+        )
+        
+        st.divider()
+        st.header("⚙️ 3D 模擬參數")
+        grid_n = st.slider("網格點數 (N)", 10, 60, 30)
         
         with st.expander("設定邊界電位 (Boundary)", expanded=True):
             c1, c2 = st.columns(2)
@@ -504,28 +535,41 @@ def render_3d_cartesian():
         tolerance = st.select_slider("精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4)
         
         st.divider()
-        surface_count = st.slider("等位面層數", 3, 20, 10)
-        opacity = st.slider("透明度", 0.1, 1.0, 0.3)
-        show_caps = st.checkbox("顯示封蓋 (Caps)", False)
+        st.header("🎨 繪圖微調")
+        if viz_mode == "電位分佈 (Potential)":
+            surface_count = st.slider("等位面層數", 3, 20, 10)
+            opacity = st.slider("透明度", 0.1, 1.0, 0.3)
+            show_caps = st.checkbox("顯示封蓋 (Caps)", False)
+        else:
+            cone_scale = st.slider("箭頭大小係數", 0.1, 5.0, 2.0)
+            stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
 
-    # 計算
-    with st.spinner(f'3D 物理運算中 (網格: {grid_n}^3)...'):
+    # 2. 計算
+    with st.spinner(f'3D 物理運算中...'):
         start_time = time.time()
-        X, Y, Z, V, actual_iter = calculate_potential_3d(
+        # 呼叫新的物理引擎
+        X, Y, Z, V, Ex, Ey, Ez, actual_iter = calculate_3d_physics(
             grid_n, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance
         )
         end_time = time.time()
 
-    # 顯示統計
+    # 3. 顯示統計
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Max V", f"{np.max(V):.1f} V")
-    c2.metric("Min V", f"{np.min(V):.1f} V")
-    c3.metric("Center V", f"{V[grid_n//2, grid_n//2, grid_n//2]:.1f} V")
+    # 計算電場最大值
+    E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
+    c2.metric("Max |E|", f"{np.max(E_mag):.1f} V/m")
+    c3.metric("Grid Points", f"{grid_n**3:,}")
     c4.metric("Time", f"{end_time - start_time:.3f} s", help=f"Iter: {actual_iter}")
 
-    # 繪圖
-    fig = create_3d_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-    st.plotly_chart(fig, use_container_width=True)
+    # 4. 繪圖
+    st.divider()
+    if viz_mode == "電位分佈 (Potential)":
+        fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+        st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
 # 6. 主導航邏輯
