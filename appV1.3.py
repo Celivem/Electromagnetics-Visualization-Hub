@@ -213,7 +213,7 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
         surface_count=surface_count,
         opacity=opacity,
         caps=dict(x_show=show_caps, y_show=show_caps, z_show=show_caps),
-        colorscale='Rainbow', # 修改：使用彩虹配色
+        colorscale='Rainbow',
         colorbar=dict(title='電位 V (Volts)'),
         hoverinfo='all'
     ))
@@ -225,8 +225,8 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     return fig
 
 def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride, colorscale='Rainbow'):
-    """繪製 3D 電場向量 (固定大小箭頭，顏色代表強弱)"""
-    # 降採樣
+    """繪製 3D 電場向量"""
+    # 降採樣以提升效能
     X_sub = X[::stride, ::stride, ::stride].flatten()
     Y_sub = Y[::stride, ::stride, ::stride].flatten()
     Z_sub = Z[::stride, ::stride, ::stride].flatten()
@@ -234,24 +234,18 @@ def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride, colorscale='Rainbow'
     Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
     Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
     
-    # 計算場強大小
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
     
-    # 正規化向量 (使箭頭長度固定)
-    # 避免除以零
-    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
-    u_norm = Ex_sub / E_mag_safe
-    v_norm = Ey_sub / E_mag_safe
-    w_norm = Ez_sub / E_mag_safe
+    # Plotly Cone 使用 u,v,w 的大小決定箭頭大小與顏色，不支援獨立的 intensity
+    # 因此我們直接傳入原始向量，讓大小和顏色都反映場強
     
     fig = go.Figure(data=go.Cone(
         x=X_sub, y=Y_sub, z=Z_sub,
-        u=u_norm, v=v_norm, w=w_norm, # 使用單位向量方向
-        intensity=E_mag,              # 顏色映射到真實場強
-        colorscale=colorscale,        # 修改：使用彩虹配色
+        u=Ex_sub, v=Ey_sub, w=Ez_sub, # 向量決定方向與大小
+        colorscale=colorscale,
         cmin=np.min(E_mag), cmax=np.max(E_mag),
         sizemode="scaled", 
-        sizeref=scale,                # 控制固定箭頭的大小
+        sizeref=scale, # 調整此參數控制整體箭頭縮放
         anchor="tail",
         colorbar=dict(title='電場強度 |E|'),
         hoverinfo='u+v+w+norm'
@@ -560,7 +554,7 @@ def render_3d_cartesian():
             opacity = st.slider("透明度", 0.1, 1.0, 0.3)
             show_caps = st.checkbox("顯示封蓋 (Caps)", False)
         else:
-            cone_scale = st.slider("固定箭頭大小", 0.1, 2.0, 0.5) # 調整標籤與預設值以適應固定大小模式
+            cone_scale = st.slider("箭頭大小係數", 0.1, 5.0, 2.0)
             stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
 
     with st.spinner(f'3D 物理運算中...'):
@@ -580,9 +574,10 @@ def render_3d_cartesian():
     st.divider()
     if viz_mode == "電位分佈 (Potential)":
         fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val) # 這裡會自動使用新的預設 Rainbow
-    st.plotly_chart(fig, use_container_width=True)
+        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+        st.plotly_chart(fig, use_container_width=True)
 
 def render_3d_point_charge():
     st.subheader("⚡ 3D 點電荷模擬")
