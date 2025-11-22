@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors # 新增：用於處理顏色映射
 import plotly.graph_objects as go
 import time
 from scipy.integrate import quad
@@ -37,8 +38,8 @@ st.markdown("""
 # 初始化 Session State
 default_states = {
     'fourier_result': None,
-    'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}], # 2D
-    'point_charges_3d': [ # 3D 預設電荷 (Dipole)
+    'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}],
+    'point_charges_3d': [
         {'x': 1.0, 'y': 0.0, 'z': 0.0, 'q': 1.0}, 
         {'x': -1.0, 'y': 0.0, 'z': 0.0, 'q': -1.0}
     ],
@@ -55,7 +56,6 @@ for key, val in default_states.items():
 # ==========================================
 
 def get_safe_math_scope(x_val=None):
-    """建立安全的數學運算命名空間"""
     scope = {
         "np": np, "signal": signal, "special": special,
         "sin": np.sin, "cos": np.cos, "tan": np.tan,
@@ -68,8 +68,7 @@ def get_safe_math_scope(x_val=None):
         "arcsin": np.arcsin, "arccos": np.arccos, "arctan": np.arctan,
         "legendre": eval_legendre
     }
-    if x_val is not None:
-        scope["x"] = x_val
+    if x_val is not None: scope["x"] = x_val
     return scope
 
 def eval_func(func_str, x_val):
@@ -148,54 +147,40 @@ def plot_heatmap(data, title, xlabel="x", ylabel="y"):
     return fig
 
 # ==========================================
-# 3. 3D 核心運算函數 (完整定義)
+# 3. 3D 核心運算函數
 # ==========================================
 
 @st.cache_data(show_spinner=False)
 def calculate_3d_physics(N, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance):
-    """求解 3D Laplace 方程式並計算電場 (解決 NameError 的關鍵)"""
-    # 1. 初始化
+    """求解 3D Laplace 方程式"""
     V = np.zeros((N, N, N))
-    
-    # 設定邊界
-    V[:, :, -1] = v_top;    V[:, :, 0]  = v_bottom # Z
-    V[:, -1, :] = v_back;   V[:, 0, :]  = v_front  # Y
-    V[-1, :, :] = v_right;  V[0, :, :]  = v_left   # X
+    V[:, :, -1] = v_top;    V[:, :, 0]  = v_bottom
+    V[:, -1, :] = v_back;   V[:, 0, :]  = v_front
+    V[-1, :, :] = v_right;  V[0, :, :]  = v_left
 
-    # 2. 迭代求解電位 (Relaxation)
     for i in range(max_iter):
         V_old = V.copy()
-        # 向量化計算：只更新內部點
         V[1:-1, 1:-1, 1:-1] = (1/6) * (
             V[2:, 1:-1, 1:-1] + V[:-2, 1:-1, 1:-1] + 
             V[1:-1, 2:, 1:-1] + V[1:-1, :-2, 1:-1] + 
             V[1:-1, 1:-1, 2:] + V[1:-1, 1:-1, :-2]
         )
-        
-        # 邊界重置
         V[:, :, -1] = v_top; V[:, :, 0] = v_bottom
         V[:, -1, :] = v_back; V[:, 0, :] = v_front
         V[-1, :, :] = v_right; V[0, :, :] = v_left
-
         if i % 200 == 0:
-            diff = np.max(np.abs(V - V_old))
-            if diff < tolerance:
-                break
+            if np.max(np.abs(V - V_old)) < tolerance: break
                 
-    # 3. 計算電場 (E = -Gradient V)
     h = 1.0 / (N - 1)
     grads = np.gradient(V, h)
     Ex, Ey, Ez = -grads[0], -grads[1], -grads[2]
-
-    # 4. 建立座標
     grid_range = np.linspace(0, 1, N)
     X, Y, Z = np.meshgrid(grid_range, grid_range, grid_range, indexing='ij')
-    
     return X, Y, Z, V, Ex, Ey, Ez, i
 
 @st.cache_data(show_spinner=False)
 def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
-    """3D 點電荷場計算 (解決 NameError 的關鍵)"""
+    """3D 點電荷場計算"""
     charges = list(charges_tuple)
     x = np.linspace(-grid_range, grid_range, grid_res)
     y = np.linspace(-grid_range, grid_range, grid_res)
@@ -218,7 +203,7 @@ def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
 
     return X, Y, Z, V, Ex, Ey, Ez
 
-# --- 3D 視覺化函數 (Hybrid: Cone + Scatter) ---
+# --- 3D 視覺化 (改良版：分組渲染法) ---
 
 def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     """繪製 3D 電位等位面"""
@@ -229,8 +214,8 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
         surface_count=surface_count,
         opacity=opacity,
         caps=dict(x_show=show_caps, y_show=show_caps, z_show=show_caps),
-        colorscale='Rainbow',
-        colorbar=dict(title='電位 V (Volts)'),
+        colorscale='Jet',
+        colorbar=dict(title='電位 V'),
         hoverinfo='all'
     ))
     fig.update_layout(
@@ -240,11 +225,10 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     )
     return fig
 
-def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride, colorscale='Rainbow'):
+def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
     """
-    使用混合圖層繪製 3D 電場：
-    1. go.Cone (歸一化): 顯示固定大小的方向
-    2. go.Scatter3d (顏色點): 顯示電場強度 (Rainbow)
+    繪製 3D 電場 (固定大小，顏色代表強弱)
+    技術：使用 Binning 將向量分組，分別賦予單一顏色，以繞過 go.Cone 的限制。
     """
     # 1. 降採樣
     X_sub = X[::stride, ::stride, ::stride].flatten()
@@ -254,50 +238,68 @@ def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride, colorscale='Rainbow'
     Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
     Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
     
-    # 2. 計算真實場強
+    # 2. 計算強度與單位向量
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
-    
-    # 3. 向量歸一化 (Normalization) -> 讓箭頭大小固定
+    # 避免除以零
     E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
-    u_norm = Ex_sub / E_mag_safe
-    v_norm = Ey_sub / E_mag_safe
-    w_norm = Ez_sub / E_mag_safe
-    
+    U_norm = Ex_sub / E_mag_safe
+    V_norm = Ey_sub / E_mag_safe
+    W_norm = Ez_sub / E_mag_safe
+
     fig = go.Figure()
+    
+    # 3. 分組著色 (Binning)
+    # 將強度分為 N 個等級，每個等級畫一組箭頭
+    n_bins = 20
+    cmap = plt.get_cmap('jet') # 使用 Jet (Rainbow like) 配色
+    
+    # 找出最大最小強度 (可以稍微 clip 避免極值影響配色)
+    vmin, vmax = np.percentile(E_mag, 5), np.percentile(E_mag, 95)
+    bins = np.linspace(vmin, vmax, n_bins)
+    
+    # 決定每個點屬於哪個 bin
+    indices = np.digitize(E_mag, bins) - 1
+    indices = np.clip(indices, 0, n_bins - 1)
+    
+    # 逐一繪製每個 Bin 的箭頭
+    for i in range(n_bins):
+        mask = (indices == i)
+        if not np.any(mask): continue
+        
+        # 計算該 Bin 的代表色
+        color_val = i / (n_bins - 1)
+        hex_color = mcolors.to_hex(cmap(color_val))
+        
+        fig.add_trace(go.Cone(
+            x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
+            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask], # 使用單位向量 -> 長度固定
+            colorscale=[[0, hex_color], [1, hex_color]],    # 強制單一顏色
+            showscale=False,
+            sizemode="scaled",
+            sizeref=scale, # 使用者可調的固定大小
+            anchor="tail",
+            hoverinfo='u+v+w+name',
+            name=f"E ~ {bins[i]:.1f}"
+        ))
 
-    # 圖層 A: 方向 (固定大小的灰色箭頭)
-    fig.add_trace(go.Cone(
-        x=X_sub, y=Y_sub, z=Z_sub,
-        u=u_norm, v=v_norm, w=w_norm, # 使用單位向量
-        colorscale=[[0, 'rgba(128,128,128,0.3)'], [1, 'rgba(128,128,128,0.3)']], # 半透明灰
-        showscale=False,
-        sizemode="scaled",
-        sizeref=scale,   # 固定大小
-        anchor="tail",
-        hoverinfo='skip'
-    ))
-
-    # 圖層 B: 強度 (彩虹色圓點)
+    # 4. 偽造 Colorbar (Invisible Scatter)
+    # 因為上面的 Cones 沒有色條，我們加一個隱形的 Scatter 來顯示正確的 Colorbar
     fig.add_trace(go.Scatter3d(
-        x=X_sub, y=Y_sub, z=Z_sub,
+        x=[None], y=[None], z=[None],
         mode='markers',
         marker=dict(
-            size=4,
-            color=E_mag,
-            colorscale=colorscale, # 使用指定的 colorscale (Rainbow)
-            colorbar=dict(title='電場強度 |E|', x=0.85),
-            cmin=np.min(E_mag),
-            cmax=np.max(E_mag),
-            opacity=0.8
-        ),
-        name='Field Strength',
-        hovertemplate='x:%{x:.2f}<br>y:%{y:.2f}<br>z:%{z:.2f}<br>|E|:%{marker.color:.2e}<extra></extra>'
+            colorscale='Jet',
+            cmin=vmin, cmax=vmax,
+            showscale=True,
+            colorbar=dict(title='電場強度 |E|', x=0.9)
+        )
     ))
 
     fig.update_layout(
-        title="3D 電場向量分佈 (Rainbow Strength + Fixed Direction)",
+        title="3D 電場向量分佈 (Rainbow Color + Fixed Size)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
-        margin=dict(l=0, r=0, b=0, t=40), height=700
+        margin=dict(l=0, r=0, b=0, t=40), height=700,
+        showlegend=False
     )
     return fig
 
@@ -598,7 +600,8 @@ def render_3d_cartesian():
             opacity = st.slider("透明度", 0.1, 1.0, 0.3)
             show_caps = st.checkbox("顯示封蓋 (Caps)", False)
         else:
-            cone_scale = st.slider("箭頭大小係數", 0.1, 5.0, 0.5)
+            st.info("💡 箭頭顏色代表強弱，大小固定。")
+            cone_scale = st.slider("箭頭大小係數", 0.1, 1.0, 0.4)
             stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
 
     with st.spinner(f'3D 物理運算中...'):
@@ -618,10 +621,9 @@ def render_3d_cartesian():
     st.divider()
     if viz_mode == "電位分佈 (Potential)":
         fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-        st.plotly_chart(fig, use_container_width=True)
     else:
-        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-        st.plotly_chart(fig, use_container_width=True)
+        fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+    st.plotly_chart(fig, use_container_width=True)
 
 def render_3d_point_charge():
     st.subheader("⚡ 3D 點電荷模擬")
@@ -671,7 +673,8 @@ def render_3d_point_charge():
             opacity = st.slider("透明度", 0.1, 1.0, 0.3)
             show_caps = st.checkbox("顯示封蓋", False)
         else:
-            cone_scale = st.slider("箭頭大小", 0.1, 5.0, 0.5)
+            st.info("💡 箭頭顏色代表強弱，大小固定。")
+            cone_scale = st.slider("箭頭大小", 0.1, 2.0, 0.5)
             stride_val = st.slider("採樣間隔", 1, 3, 1)
 
     if not st.session_state.point_charges_3d:
@@ -687,7 +690,7 @@ def render_3d_point_charge():
 
     # 統計
     c1, c2, c3 = st.columns(3)
-    c1.metric("Max V", f"{np.max(np.abs(V)):.1f} V") # 顯示絕對值最大
+    c1.metric("Max V", f"{np.max(np.abs(V)):.1f} V") 
     E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
     c2.metric("Max |E|", f"{np.max(E_mag):.1f}")
     c3.metric("Time", f"{end_time - start_time:.3f} s")
@@ -704,7 +707,7 @@ def render_3d_point_charge():
                 name=f"Q={q['q']}", showlegend=False
             ))
     else:
-        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val, colorscale='Rainbow')
+        fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
         # 加上電荷點
         for q in st.session_state.point_charges_3d:
             color = 'red' if q['q'] > 0 else 'blue'
