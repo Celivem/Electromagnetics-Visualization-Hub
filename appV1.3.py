@@ -37,7 +37,11 @@ st.markdown("""
 # 初始化 Session State
 default_states = {
     'fourier_result': None,
-    'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}],
+    'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}], # 2D
+    'point_charges_3d': [ # 3D 預設電荷 (Dipole)
+        {'x': 1.0, 'y': 0.0, 'z': 0.0, 'q': 1.0}, 
+        {'x': -1.0, 'y': 0.0, 'z': 0.0, 'q': -1.0}
+    ],
     'legendre_coeffs': None,
     'legendre_func': None
 }
@@ -149,48 +153,56 @@ def plot_heatmap(data, title, xlabel="x", ylabel="y"):
 
 @st.cache_data(show_spinner=False)
 def calculate_3d_physics(N, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance):
-    """
-    求解 3D Laplace 方程式並計算電場
-    Returns: X, Y, Z, V, Ex, Ey, Ez, actual_iter
-    """
-    # 1. 初始化
+    """求解 3D Laplace 方程式"""
     V = np.zeros((N, N, N))
-    
-    # 設定邊界
-    V[:, :, -1] = v_top;    V[:, :, 0]  = v_bottom # Z
-    V[:, -1, :] = v_back;   V[:, 0, :]  = v_front  # Y
-    V[-1, :, :] = v_right;  V[0, :, :]  = v_left   # X
+    V[:, :, -1] = v_top;    V[:, :, 0]  = v_bottom
+    V[:, -1, :] = v_back;   V[:, 0, :]  = v_front
+    V[-1, :, :] = v_right;  V[0, :, :]  = v_left
 
-    # 2. 迭代求解電位 (Relaxation)
     for i in range(max_iter):
         V_old = V.copy()
-        # 向量化計算：只更新內部點
         V[1:-1, 1:-1, 1:-1] = (1/6) * (
             V[2:, 1:-1, 1:-1] + V[:-2, 1:-1, 1:-1] + 
             V[1:-1, 2:, 1:-1] + V[1:-1, :-2, 1:-1] + 
             V[1:-1, 1:-1, 2:] + V[1:-1, 1:-1, :-2]
         )
-        
-        # 邊界重置
         V[:, :, -1] = v_top; V[:, :, 0] = v_bottom
         V[:, -1, :] = v_back; V[:, 0, :] = v_front
         V[-1, :, :] = v_right; V[0, :, :] = v_left
-
         if i % 200 == 0:
-            diff = np.max(np.abs(V - V_old))
-            if diff < tolerance:
-                break
+            if np.max(np.abs(V - V_old)) < tolerance: break
                 
-    # 3. 計算電場 (E = -Gradient V)
     h = 1.0 / (N - 1)
     grads = np.gradient(V, h)
     Ex, Ey, Ez = -grads[0], -grads[1], -grads[2]
-
-    # 4. 建立座標
     grid_range = np.linspace(0, 1, N)
     X, Y, Z = np.meshgrid(grid_range, grid_range, grid_range, indexing='ij')
-    
     return X, Y, Z, V, Ex, Ey, Ez, i
+
+@st.cache_data(show_spinner=False)
+def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
+    """3D 點電荷場計算"""
+    charges = list(charges_tuple)
+    x = np.linspace(-grid_range, grid_range, grid_res)
+    y = np.linspace(-grid_range, grid_range, grid_res)
+    z = np.linspace(-grid_range, grid_range, grid_res)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+
+    Ex, Ey, Ez = np.zeros_like(X), np.zeros_like(Y), np.zeros_like(Z)
+    V = np.zeros_like(X)
+    k = 1.0 
+
+    for charge in charges:
+        qx, qy, qz, q_val = charge['x'], charge['y'], charge['z'], charge['q']
+        rx = X - qx; ry = Y - qy; rz = Z - qz
+        r = np.sqrt(rx**2 + ry**2 + rz**2)
+        r[r < 0.2] = 0.2 # Singularity handling
+        
+        V += k * q_val / r
+        E_mag = k * q_val / (r**3)
+        Ex += E_mag * rx; Ey += E_mag * ry; Ez += E_mag * rz
+
+    return X, Y, Z, V, Ex, Ey, Ez
 
 def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     """繪製 3D 電位等位面"""
@@ -201,7 +213,7 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
         surface_count=surface_count,
         opacity=opacity,
         caps=dict(x_show=show_caps, y_show=show_caps, z_show=show_caps),
-        colorscale='RdBu_r',
+        colorscale='Rainbow', # 修改：使用彩虹配色
         colorbar=dict(title='電位 V (Volts)'),
         hoverinfo='all'
     ))
@@ -212,8 +224,8 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     )
     return fig
 
-def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """繪製 3D 電場向量"""
+def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride, colorscale='Rainbow'):
+    """繪製 3D 電場向量 (固定大小箭頭，顏色代表強弱)"""
     # 降採樣
     X_sub = X[::stride, ::stride, ::stride].flatten()
     Y_sub = Y[::stride, ::stride, ::stride].flatten()
@@ -222,14 +234,25 @@ def create_field_figure(X, Y, Z, Ex, Ey, Ez, scale, stride):
     Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
     Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
     
+    # 計算場強大小
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
+    
+    # 正規化向量 (使箭頭長度固定)
+    # 避免除以零
+    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
+    u_norm = Ex_sub / E_mag_safe
+    v_norm = Ey_sub / E_mag_safe
+    w_norm = Ez_sub / E_mag_safe
     
     fig = go.Figure(data=go.Cone(
         x=X_sub, y=Y_sub, z=Z_sub,
-        u=Ex_sub, v=Ey_sub, w=Ez_sub,
-        colorscale='Viridis',
+        u=u_norm, v=v_norm, w=w_norm, # 使用單位向量方向
+        intensity=E_mag,              # 顏色映射到真實場強
+        colorscale=colorscale,        # 修改：使用彩虹配色
         cmin=np.min(E_mag), cmax=np.max(E_mag),
-        sizemode="scaled", sizeref=scale, anchor="tail",
+        sizemode="scaled", 
+        sizeref=scale,                # 控制固定箭頭的大小
+        anchor="tail",
         colorbar=dict(title='電場強度 |E|'),
         hoverinfo='u+v+w+norm'
     ))
@@ -356,7 +379,7 @@ def render_legendre_page():
         c1, c2 = st.columns(2)
         buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150); buf.seek(0)
         c1.download_button("📥 下載圖表", buf, "legendre.png", "image/png", use_container_width=True)
-        c2.download_button("📥 下載係數", df.to_csv(index=False).encode(), "coeffs.csv", "text/csv", use_container_width=True)
+        c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", use_container_width=True)
         with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
 
 def render_potential_point_charge():
@@ -501,21 +524,17 @@ def render_potential_spherical_2d():
         except Exception as e: st.error(f"Error: {e}")
 
 # ==========================================
-# 5. 3D 渲染邏輯 (NEW!)
+# 5. 3D 渲染邏輯
 # ==========================================
 
 def render_3d_cartesian():
     st.subheader("🧊 3D 靜電場視覺化：笛卡爾座標")
     st.markdown("使用有限差分法求解 $\\nabla^2 V = 0$。設定六個面的邊界電位，觀察內部分佈。")
 
-    # 1. 側邊欄參數
     with st.sidebar:
         st.markdown("---")
-        # --- 模式切換 (放在側邊欄以符合您提供的範例風格，也可移至主畫面) ---
         viz_mode = st.radio(
-            "選擇視覺化模式",
-            ["電位分佈 (Potential)", "電場向量 (Electric Field)"],
-            index=0
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0
         )
         
         st.divider()
@@ -541,35 +560,122 @@ def render_3d_cartesian():
             opacity = st.slider("透明度", 0.1, 1.0, 0.3)
             show_caps = st.checkbox("顯示封蓋 (Caps)", False)
         else:
-            cone_scale = st.slider("箭頭大小係數", 0.1, 5.0, 2.0)
+            cone_scale = st.slider("固定箭頭大小", 0.1, 2.0, 0.5) # 調整標籤與預設值以適應固定大小模式
             stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
 
-    # 2. 計算
     with st.spinner(f'3D 物理運算中...'):
         start_time = time.time()
-        # 呼叫新的物理引擎
         X, Y, Z, V, Ex, Ey, Ez, actual_iter = calculate_3d_physics(
             grid_n, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance
         )
         end_time = time.time()
 
-    # 3. 顯示統計
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Max V", f"{np.max(V):.1f} V")
-    # 計算電場最大值
     E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
     c2.metric("Max |E|", f"{np.max(E_mag):.1f} V/m")
     c3.metric("Grid Points", f"{grid_n**3:,}")
     c4.metric("Time", f"{end_time - start_time:.3f} s", help=f"Iter: {actual_iter}")
 
-    # 4. 繪圖
     st.divider()
     if viz_mode == "電位分佈 (Potential)":
         fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-        st.plotly_chart(fig, use_container_width=True)
     else:
-        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-        st.plotly_chart(fig, use_container_width=True)
+        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val) # 這裡會自動使用新的預設 Rainbow
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_3d_point_charge():
+    st.subheader("⚡ 3D 點電荷模擬")
+    st.markdown("在 3D 空間中配置點電荷，即時計算電位與電場分佈。")
+
+    with st.sidebar:
+        st.markdown("---")
+        viz_mode = st.radio(
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0
+        )
+        
+        st.divider()
+        st.header("⚙️ 空間設定")
+        grid_range = st.slider("空間範圍 (±)", 1.0, 5.0, 2.5, 0.1)
+        grid_res = st.slider("網格解析度", 10, 40, 20)
+
+        st.divider()
+        st.header("🔋 電荷管理")
+        c1, c2, c3, c4 = st.columns([1,1,1,1.2])
+        nx = c1.number_input("X", 0.0, step=0.5, key="nx")
+        ny = c2.number_input("Y", 0.0, step=0.5, key="ny")
+        nz = c3.number_input("Z", 0.0, step=0.5, key="nz")
+        nq = c4.number_input("Q", 1.0, step=1.0, key="nq")
+        
+        if st.button("➕ 新增電荷", use_container_width=True):
+            st.session_state.point_charges_3d.append({'x':nx, 'y':ny, 'z':nz, 'q':nq})
+        
+        st.write("目前電荷：")
+        if st.session_state.point_charges_3d:
+            for i, c in enumerate(st.session_state.point_charges_3d):
+                col_info, col_del = st.columns([4,1])
+                col_info.caption(f"{i+1}. ({c['x']},{c['y']},{c['z']}) Q:{c['q']}")
+                if col_del.button("❌", key=f"del3d_{i}"):
+                    st.session_state.point_charges_3d.pop(i)
+                    st.rerun()
+        else:
+            st.warning("無電荷")
+            
+        if st.button("🗑️ 清空", use_container_width=True):
+            st.session_state.point_charges_3d = []
+            st.rerun()
+
+        st.divider()
+        st.header("🎨 繪圖微調")
+        if viz_mode == "電位分佈 (Potential)":
+            surface_count = st.slider("等位面層數", 3, 20, 10)
+            opacity = st.slider("透明度", 0.1, 1.0, 0.3)
+            show_caps = st.checkbox("顯示封蓋", False)
+        else:
+            cone_scale = st.slider("箭頭大小", 0.1, 5.0, 0.5)
+            stride_val = st.slider("採樣間隔", 1, 3, 1)
+
+    if not st.session_state.point_charges_3d:
+        st.info("請先在左側新增電荷")
+        return
+
+    # 計算
+    charges_tuple = tuple(st.session_state.point_charges_3d)
+    with st.spinner("3D 庫倫運算中..."):
+        start_time = time.time()
+        X, Y, Z, V, Ex, Ey, Ez = calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res)
+        end_time = time.time()
+
+    # 統計
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Max V", f"{np.max(np.abs(V)):.1f} V") # 顯示絕對值最大
+    E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
+    c2.metric("Max |E|", f"{np.max(E_mag):.1f}")
+    c3.metric("Time", f"{end_time - start_time:.3f} s")
+
+    # 繪圖
+    st.divider()
+    if viz_mode == "電位分佈 (Potential)":
+        fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+        # 加上電荷點
+        for q in st.session_state.point_charges_3d:
+            fig.add_trace(go.Scatter3d(
+                x=[q['x']], y=[q['y']], z=[q['z']],
+                mode='markers', marker=dict(size=5, color='white', line=dict(width=2, color='black')),
+                name=f"Q={q['q']}", showlegend=False
+            ))
+    else:
+        fig = create_field_figure(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val, colorscale='Rainbow')
+        # 加上電荷點
+        for q in st.session_state.point_charges_3d:
+            color = 'red' if q['q'] > 0 else 'blue'
+            fig.add_trace(go.Scatter3d(
+                x=[q['x']], y=[q['y']], z=[q['z']],
+                mode='markers+text', marker=dict(size=8, color=color, line=dict(width=2, color='black')),
+                text=[f"Q={q['q']}"], textposition="top center", name=f"Q={q['q']}"
+            ))
+            
+    st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
 # 6. 主導航邏輯
@@ -597,4 +703,4 @@ elif cat == "電位+電場模擬 (3D)":
     sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
     if sub == "笛卡爾": render_3d_cartesian()
     elif sub == "球座標": render_developing("3D 球座標模擬")
-    elif sub == "點電荷": render_developing("3D 點電荷模擬")
+    elif sub == "點電荷": render_3d_point_charge()
