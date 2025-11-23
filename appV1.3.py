@@ -34,7 +34,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 初始化 Session State
+# 初始化 Session State (新增各個頁面的結果暫存)
 default_states = {
     'fourier_result': None,
     'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}],
@@ -43,7 +43,14 @@ default_states = {
         {'x': -1.0, 'y': 0.0, 'z': 0.0, 'q': -1.0}
     ],
     'legendre_coeffs': None,
-    'legendre_func': None
+    'legendre_func': None,
+    # 新增：2D/3D 模擬結果的暫存狀態
+    'res_2d_point': None,
+    'res_2d_cart_num': None,
+    'res_2d_cart_ana': None,
+    'res_2d_sphere': None,
+    'res_3d_cart': None,
+    'res_3d_point': None
 }
 
 for key, val in default_states.items():
@@ -225,11 +232,7 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     return fig
 
 def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """
-    繪製 3D 電場 (完全固定大小，顏色代表強弱)
-    技術：使用 Binning 分組策略繞過 go.Cone 的大小限制
-    """
-    # 1. 降採樣
+    """繪製 3D 電場 (固定大小 + 彩虹顏色)"""
     X_sub = X[::stride, ::stride, ::stride].flatten()
     Y_sub = Y[::stride, ::stride, ::stride].flatten()
     Z_sub = Z[::stride, ::stride, ::stride].flatten()
@@ -237,21 +240,17 @@ def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
     Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
     Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
     
-    # 2. 計算強度與單位向量
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
-    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag) # 避免除以零
-    
-    # 關鍵：將所有向量歸一化，這樣 Plotly 畫出的箭頭長度就會完全一致
+    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
     U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
     V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
     W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
 
     fig = go.Figure()
     
-    # 3. 分組著色 (Binning)
     n_bins = 20
-    cmap = plt.get_cmap('jet') # 使用 Jet 彩虹配色
-    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98) # 去除極值影響配色
+    cmap = plt.get_cmap('jet')
+    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
     bins = np.linspace(vmin, vmax, n_bins)
     indices = np.digitize(E_mag, bins) - 1
     indices = np.clip(indices, 0, n_bins - 1)
@@ -265,16 +264,15 @@ def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
         fig.add_trace(go.Cone(
             x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
             u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
-            colorscale=[[0, hex_color], [1, hex_color]], # 強制單一顏色
+            colorscale=[[0, hex_color], [1, hex_color]],
             showscale=False,
             sizemode="scaled",
-            sizeref=scale, # 這裡的 scale 現在控制的是歸一化後的固定長度
+            sizeref=scale,
             anchor="tail",
             hoverinfo='u+v+w+name',
             name=f"E ~ {bins[i]:.2e}"
         ))
 
-    # 4. 偽造 Colorbar
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
@@ -302,18 +300,14 @@ def render_home():
     st.markdown("<h1 class='main-header'>⚡ 電磁學生成小教室 ⚡</h1>", unsafe_allow_html=True)
     st.markdown("""
     ### 歡迎來到互動學習實驗室！
-    請從左側選單選擇您想要探索的主題：
-    * **函數近似**：傅立葉級數、勒讓德多項式。
-    * **電位+電場模擬 (2D)**：經典的 2D 切面模擬。
-    * **電位+電場模擬 (3D)**：**NEW!** 互動式 3D 空間電位與電場模擬。
-    👈 **請點擊左上角箭頭打開側邊欄！**
+    請從左側選單選擇您想要探索的主題。所有模擬均需點擊 **「🚀 開始模擬」** 按鈕才會執行運算。
     """)
 
 def render_developing(title):
     st.subheader(f"🚧 {title}")
     st.info("此功能目前正在開發中，敬請期待！")
 
-# --- 2D 函數與模擬 ---
+# --- 2D 函數與模擬 (保持原樣，已包含按鈕) ---
 def render_fourier_page():
     st.subheader("📈 傅立葉級數近似")
     fourier_examples = {
@@ -426,12 +420,22 @@ def render_potential_point_charge():
     st.sidebar.divider()
     if st.session_state.point_charges:
         for i, c in enumerate(st.session_state.point_charges): st.sidebar.text(f"{i+1}. q={c['q']}, ({c['x']}, {c['y']})")
+    
+    # 視覺化參數
     show_streamlines = st.sidebar.checkbox("顯示流線", value=True)
     grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
 
-    if st.session_state.point_charges:
-        charges_tuple = tuple(st.session_state.point_charges)
-        X, Y, V = calculate_point_charge_potential(charges_tuple, grid_res)
+    # 計算按鈕
+    if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_point"):
+        if st.session_state.point_charges:
+            charges_tuple = tuple(st.session_state.point_charges)
+            st.session_state['res_2d_point'] = calculate_point_charge_potential(charges_tuple, grid_res)
+        else:
+            st.warning("請在左側加入電荷")
+
+    # 繪圖 (使用暫存結果)
+    if st.session_state['res_2d_point']:
+        X, Y, V = st.session_state['res_2d_point']
         fig, ax = plt.subplots(figsize=(10, 8))
         contour = ax.contourf(X, Y, V, levels=50, cmap='RdBu_r', extend='both')
         ax.contour(X, Y, V, levels=50, colors='k', linewidths=0.5, alpha=0.4)
@@ -444,11 +448,11 @@ def render_potential_point_charge():
             ax.text(charge['x'], charge['y'], sign, color='white', ha='center', va='center', fontweight='bold')
         ax.set_aspect('equal'); ax.set_title("Electric Potential Landscape"); fig.colorbar(contour, ax=ax)
         st.pyplot(fig); plt.close(fig)
-    else: st.warning("請在左側加入電荷")
 
 def render_laplace_cartesian_2d():
     st.subheader("🔲 電位模擬 - 笛卡爾座標 (2D)")
     mode = st.radio("模式", ["數值解 (FDM)", "解析解"], horizontal=True)
+    
     if mode == "數值解 (FDM)":
         c1, c2 = st.columns([1, 3])
         with c1:
@@ -459,7 +463,7 @@ def render_laplace_cartesian_2d():
             ti, tv = inp("上", 10.0); bi, bv = inp("下", 0.0); li, lv = inp("左", 0.0); ri, rv = inp("右", 0.0)
             iters = st.slider("迭代", 500, 5000, 2000)
         with c2:
-            if st.button("模擬", use_container_width=True):
+            if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_fdm"):
                 sz=40; pad=sz*3; th=(pad if ti else 0)+sz+(pad if bi else 0); tw=(pad if li else 0)+sz+(pad if ri else 0)
                 V = np.zeros((th, tw)); rs=pad if bi else 0; re=rs+sz; cs=pad if li else 0; ce=cs+sz
                 if not ti: V[re-1, cs:ce]=tv
@@ -474,12 +478,17 @@ def render_laplace_cartesian_2d():
                     if not li: V[rs:re, cs]=lv
                     if not ri: V[rs:re, ce-1]=rv
                     if i%(iters//10)==0: p.progress((i+1)/iters)
-                p.progress(1.0); st.pyplot(plot_heatmap(V[rs:re, cs:ce], "FDM Result"))
+                p.progress(1.0)
+                st.session_state['res_2d_cart_num'] = V[rs:re, cs:ce]
+            
+            if st.session_state['res_2d_cart_num'] is not None:
+                st.pyplot(plot_heatmap(st.session_state['res_2d_cart_num'], "FDM Result"))
     else:
         st.info("輸入支援 Python 語法")
         c1, c2 = st.columns(2)
         ts = c1.text_input("V(x,1)", "10"); bs = c1.text_input("V(x,0)", "0"); ls = c2.text_input("V(0,y)", "0"); rs = c2.text_input("V(1,y)", "0")
-        if st.button("計算"):
+        
+        if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_ana"):
             x,y,n=sp.symbols('x y n'); pi=sp.pi; terms=[]
             def calc(s, sd):
                 ex=smart_parse(s); 
@@ -496,13 +505,16 @@ def render_laplace_cartesian_2d():
                 r=calc(s,sd); 
                 if r: terms.append(r)
             if terms:
-                Vt=sum(terms); st.latex(f"V(x,y) = {sp.latex(Vt)}")
+                Vt=sum(terms)
                 X,Y=np.meshgrid(np.linspace(0,1,50),np.linspace(0,1,50)); Vn=np.zeros_like(X)
                 try:
                     fn=sp.lambdify((n,x,y),Vt,'numpy'); p=st.progress(0)
                     for i in range(1,21): Vn+=np.nan_to_num(fn(i,X,Y)); p.progress(i/20)
-                    st.pyplot(plot_heatmap(Vn, "Analytical Solution"))
+                    st.session_state['res_2d_cart_ana'] = Vn
                 except Exception as e: st.error(e)
+        
+        if st.session_state['res_2d_cart_ana'] is not None:
+            st.pyplot(plot_heatmap(st.session_state['res_2d_cart_ana'], "Analytical Solution"))
 
 def render_potential_spherical_2d():
     st.subheader("🌐 2D 極座標/球座標切面電位分析")
@@ -519,40 +531,52 @@ def render_potential_spherical_2d():
     grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
     show_lines = st.sidebar.checkbox("顯示流線", True)
 
-    if user_input:
-        try:
-            r, theta, k = sp.symbols('r theta k', real=True)
-            trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
-            V_expr = parse_expr(user_input, local_dict={'k':k, 'pi':sp.pi, 'r':r, 'theta':theta}, transformations=trans)
-            E_r = -sp.diff(V_expr, r); E_theta = -(1/r)*sp.diff(V_expr, theta)
-            
-            c1, c2 = st.columns(2)
-            c1.latex(f"V={sp.latex(V_expr)}")
-            c2.latex(f"\\vec{{E}}=({sp.latex(E_r)})\\hat{{r}} + ({sp.latex(E_theta)})\\hat{{\\theta}}")
-            
-            func_V = sp.lambdify((r, theta), V_expr.subs(k, 1), 'numpy')
-            func_Er = sp.lambdify((r, theta), E_r.subs(k, 1), 'numpy')
-            func_Et = sp.lambdify((r, theta), E_theta.subs(k, 1), 'numpy')
-            
-            x_vals = np.linspace(-rmax, rmax, grid_res); X, Y = np.meshgrid(x_vals, x_vals)
-            R = np.sqrt(X**2 + Y**2); THETA = np.arctan2(Y, X); R[R<1e-3]=1e-3
-            Z_V = func_V(R, THETA)
-            if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
-            
-            fig, ax = plt.subplots(figsize=(8, 7))
+    if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_sph"):
+        if user_input:
             try:
-                contour = ax.contourf(X, Y, Z_V, levels=50, cmap='jet'); plt.colorbar(contour, ax=ax, label='V')
-            except: st.warning("數值範圍過大，無法繪製")
-
-            if show_lines:
+                r, theta, k = sp.symbols('r theta k', real=True)
+                trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
+                V_expr = parse_expr(user_input, local_dict={'k':k, 'pi':sp.pi, 'r':r, 'theta':theta}, transformations=trans)
+                E_r = -sp.diff(V_expr, r); E_theta = -(1/r)*sp.diff(V_expr, theta)
+                
+                func_V = sp.lambdify((r, theta), V_expr.subs(k, 1), 'numpy')
+                func_Er = sp.lambdify((r, theta), E_r.subs(k, 1), 'numpy')
+                func_Et = sp.lambdify((r, theta), E_theta.subs(k, 1), 'numpy')
+                
+                x_vals = np.linspace(-rmax, rmax, grid_res); X, Y = np.meshgrid(x_vals, x_vals)
+                R = np.sqrt(X**2 + Y**2); THETA = np.arctan2(Y, X); R[R<1e-3]=1e-3
+                Z_V = func_V(R, THETA)
+                if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
+                
+                # Store results including functions for streamlines recalculation if needed (or just store data arrays)
+                # Storing data arrays is safer for simple visual updates
                 U_Er = func_Er(R, THETA); U_Et = func_Et(R, THETA)
                 if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
                 if np.isscalar(U_Et): U_Et = np.full_like(R, U_Et)
-                Ex = U_Er*np.cos(THETA) - U_Et*np.sin(THETA); Ey = U_Er*np.sin(THETA) + U_Et*np.cos(THETA)
-                ax.streamplot(X, Y, np.nan_to_num(Ex), np.nan_to_num(Ey), color=(1,1,1,0.5), linewidth=0.8)
-            
-            ax.set_aspect('equal'); st.pyplot(fig); plt.close(fig)
-        except Exception as e: st.error(f"Error: {e}")
+                
+                st.session_state['res_2d_sphere'] = {
+                    'X': X, 'Y': Y, 'Z_V': Z_V, 'U_Er': U_Er, 'U_Et': U_Et, 'THETA': THETA,
+                    'V_latex': sp.latex(V_expr), 'Er_latex': sp.latex(E_r), 'Et_latex': sp.latex(E_theta)
+                }
+            except Exception as e: st.error(f"Error: {e}")
+
+    if st.session_state['res_2d_sphere']:
+        res = st.session_state['res_2d_sphere']
+        c1, c2 = st.columns(2)
+        c1.latex(f"V={res['V_latex']}")
+        c2.latex(f"\\vec{{E}}=({res['Er_latex']})\\hat{{r}} + ({res['Et_latex']})\\hat{{\\theta}}")
+        
+        fig, ax = plt.subplots(figsize=(8, 7))
+        try:
+            contour = ax.contourf(res['X'], res['Y'], res['Z_V'], levels=50, cmap='jet'); plt.colorbar(contour, ax=ax, label='V')
+        except: st.warning("數值範圍過大，無法繪製")
+
+        if show_lines:
+            Ex = res['U_Er']*np.cos(res['THETA']) - res['U_Et']*np.sin(res['THETA'])
+            Ey = res['U_Er']*np.sin(res['THETA']) + res['U_Et']*np.cos(res['THETA'])
+            ax.streamplot(res['X'], res['Y'], np.nan_to_num(Ex), np.nan_to_num(Ey), color=(1,1,1,0.5), linewidth=0.8)
+        
+        ax.set_aspect('equal'); st.pyplot(fig); plt.close(fig)
 
 # ==========================================
 # 5. 3D 渲染邏輯
@@ -560,8 +584,9 @@ def render_potential_spherical_2d():
 
 def render_3d_cartesian():
     st.subheader("🧊 3D 靜電場視覺化：笛卡爾座標")
-    st.markdown("使用有限差分法求解 $\\nabla^2 V = 0$。設定六個面的邊界電位，觀察內部分佈。")
+    st.markdown("使用有限差分法求解 $\\nabla^2 V = 0$。")
 
+    # 1. 側邊欄參數
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
@@ -591,31 +616,38 @@ def render_3d_cartesian():
             opacity = st.slider("透明度", 0.1, 1.0, 0.3)
             show_caps = st.checkbox("顯示封蓋 (Caps)", False)
         else:
-            st.info("💡 箭頭顏色代表強弱，大小固定。")
-            # 注意：笛卡爾座標範圍 0-1，箭頭大小需較小 (0.05 - 0.2)
-            cone_scale = st.slider("箭頭大小", 0.05, 0.2, 0.1)
+            st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
+            cone_scale = st.slider("箭頭固定大小", 0.05, 0.2, 0.1)
             stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
 
-    with st.spinner(f'3D 物理運算中...'):
-        start_time = time.time()
-        X, Y, Z, V, Ex, Ey, Ez, actual_iter = calculate_3d_physics(
-            grid_n, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance
-        )
-        end_time = time.time()
+    # 2. 計算按鈕
+    if st.sidebar.button("🚀 開始模擬", key="btn_3d_cart"):
+        with st.spinner(f'3D 物理運算中...'):
+            start_time = time.time()
+            results = calculate_3d_physics(
+                grid_n, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance
+            )
+            end_time = time.time()
+            st.session_state['res_3d_cart'] = (results, end_time - start_time)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Max V", f"{np.max(V):.1f} V")
-    E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
-    c2.metric("Max |E|", f"{np.max(E_mag):.1f} V/m")
-    c3.metric("Grid Points", f"{grid_n**3:,}")
-    c4.metric("Time", f"{end_time - start_time:.3f} s", help=f"Iter: {actual_iter}")
+    # 3. 繪圖與統計
+    if st.session_state['res_3d_cart']:
+        (X, Y, Z, V, Ex, Ey, Ez, actual_iter), elapsed_time = st.session_state['res_3d_cart']
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Max V", f"{np.max(V):.1f} V")
+        E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
+        c2.metric("Max |E|", f"{np.max(E_mag):.1f} V/m")
+        c3.metric("Grid Points", f"{grid_n**3:,}")
+        c4.metric("Time", f"{elapsed_time:.3f} s", help=f"Iter: {actual_iter}")
 
-    st.divider()
-    if viz_mode == "電位分佈 (Potential)":
-        fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-    else:
-        fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-    st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+        if viz_mode == "電位分佈 (Potential)":
+            fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            st.plotly_chart(fig, use_container_width=True)
 
 def render_3d_point_charge():
     st.subheader("⚡ 3D 點電荷模擬")
@@ -665,8 +697,7 @@ def render_3d_point_charge():
             opacity = st.slider("透明度", 0.1, 1.0, 0.3)
             show_caps = st.checkbox("顯示封蓋", False)
         else:
-            st.info("💡 箭頭顏色代表強弱，大小固定。")
-            # 注意：點電荷空間範圍較大 (-2.5 ~ 2.5)，箭頭大小需較大 (0.3 - 1.0)
+            st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
             cone_scale = st.slider("箭頭大小", 0.3, 1.0, 0.5)
             stride_val = st.slider("採樣間隔", 1, 3, 1)
 
@@ -674,43 +705,47 @@ def render_3d_point_charge():
         st.info("請先在左側新增電荷")
         return
 
-    # 計算
-    charges_tuple = tuple(st.session_state.point_charges_3d)
-    with st.spinner("3D 庫倫運算中..."):
-        start_time = time.time()
-        X, Y, Z, V, Ex, Ey, Ez = calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res)
-        end_time = time.time()
-
-    # 統計
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Max V", f"{np.max(np.abs(V)):.1f} V") 
-    E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
-    c2.metric("Max |E|", f"{np.max(E_mag):.1f}")
-    c3.metric("Time", f"{end_time - start_time:.3f} s")
+    # 計算按鈕
+    if st.sidebar.button("🚀 開始模擬", key="btn_3d_point"):
+        charges_tuple = tuple(st.session_state.point_charges_3d)
+        with st.spinner("3D 庫倫運算中..."):
+            start_time = time.time()
+            results = calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res)
+            end_time = time.time()
+            st.session_state['res_3d_point'] = (results, end_time - start_time)
 
     # 繪圖
-    st.divider()
-    if viz_mode == "電位分佈 (Potential)":
-        fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-        # 加上電荷點
-        for q in st.session_state.point_charges_3d:
-            fig.add_trace(go.Scatter3d(
-                x=[q['x']], y=[q['y']], z=[q['z']],
-                mode='markers', marker=dict(size=5, color='white', line=dict(width=2, color='black')),
-                name=f"Q={q['q']}", showlegend=False
-            ))
-    else:
-        fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-        # 加上電荷點
-        for q in st.session_state.point_charges_3d:
-            color = 'red' if q['q'] > 0 else 'blue'
-            fig.add_trace(go.Scatter3d(
-                x=[q['x']], y=[q['y']], z=[q['z']],
-                mode='markers+text', marker=dict(size=8, color=color, line=dict(width=2, color='black')),
-                text=[f"Q={q['q']}"], textposition="top center", name=f"Q={q['q']}"
-            ))
-            
-    st.plotly_chart(fig, use_container_width=True)
+    if st.session_state['res_3d_point']:
+        (X, Y, Z, V, Ex, Ey, Ez), elapsed_time = st.session_state['res_3d_point']
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Max V", f"{np.max(np.abs(V)):.1f} V") 
+        E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
+        c2.metric("Max |E|", f"{np.max(E_mag):.1f}")
+        c3.metric("Time", f"{elapsed_time:.3f} s")
+
+        st.divider()
+        if viz_mode == "電位分佈 (Potential)":
+            fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+            # 加上電荷點
+            for q in st.session_state.point_charges_3d:
+                fig.add_trace(go.Scatter3d(
+                    x=[q['x']], y=[q['y']], z=[q['z']],
+                    mode='markers', marker=dict(size=5, color='white', line=dict(width=2, color='black')),
+                    name=f"Q={q['q']}", showlegend=False
+                ))
+        else:
+            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            # 加上電荷點
+            for q in st.session_state.point_charges_3d:
+                color = 'red' if q['q'] > 0 else 'blue'
+                fig.add_trace(go.Scatter3d(
+                    x=[q['x']], y=[q['y']], z=[q['z']],
+                    mode='markers+text', marker=dict(size=8, color=color, line=dict(width=2, color='black')),
+                    text=[f"Q={q['q']}"], textposition="top center", name=f"Q={q['q']}"
+                ))
+                
+        st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
 # 6. 主導航邏輯
