@@ -34,7 +34,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 初始化 Session State (新增各個頁面的結果暫存)
+# 初始化 Session State
 default_states = {
     'fourier_result': None,
     'point_charges': [{'q': 1.0, 'x': -2.0, 'y': 0.0}, {'q': -1.0, 'x': 2.0, 'y': 0.0}],
@@ -44,10 +44,11 @@ default_states = {
     ],
     'legendre_coeffs': None,
     'legendre_func': None,
-    # 新增：2D/3D 模擬結果的暫存狀態
+    # 模擬結果暫存
     'res_2d_point': None,
     'res_2d_cart_num': None,
     'res_2d_cart_ana': None,
+    'res_2d_cart_ana_text': None, # 新增：用於儲存 2D 解析解的公式字串
     'res_2d_sphere': None,
     'res_3d_cart': None,
     'res_3d_point': None
@@ -307,7 +308,7 @@ def render_developing(title):
     st.subheader(f"🚧 {title}")
     st.info("此功能目前正在開發中，敬請期待！")
 
-# --- 2D 函數與模擬 (保持原樣，已包含按鈕) ---
+# --- 2D 函數與模擬 ---
 def render_fourier_page():
     st.subheader("📈 傅立葉級數近似")
     fourier_examples = {
@@ -483,63 +484,41 @@ def render_laplace_cartesian_2d():
             
             if st.session_state['res_2d_cart_num'] is not None:
                 st.pyplot(plot_heatmap(st.session_state['res_2d_cart_num'], "FDM Result"))
-    elif mode == "解析解 (Separation of Variables)":
-        st.info("輸入支援 Python 語法，例如 `x`, `sin(pi*x)`")
+    else:
+        st.info("輸入支援 Python 語法")
         c1, c2 = st.columns(2)
-        ts = c1.text_input("V(x,1)", "10")
-        bs = c1.text_input("V(x,0)", "0")
-        ls = c2.text_input("V(0,y)", "0")
-        rs = c2.text_input("V(1,y)", "0")
+        ts = c1.text_input("V(x,1)", "10"); bs = c1.text_input("V(x,0)", "0"); ls = c2.text_input("V(0,y)", "0"); rs = c2.text_input("V(1,y)", "0")
         
-        if st.button("推導與計算", use_container_width=True):
-            x, y, n = sp.symbols('x y n')
-            pi = sp.pi
-            terms = []
-            
-            def calculate_boundary_contribution(input_s, side):
-                ex = smart_parse(input_s)
+        if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_ana"):
+            x,y,n=sp.symbols('x y n'); pi=sp.pi; terms=[]
+            def calc(s, sd):
+                ex=smart_parse(s); 
                 if not ex: return None
-                
-                var = x if side in ['left', 'right'] else y
-                integrand = ex.subs(x if side in ['top', 'bottom'] else y, x)
-                
-                try:
-                    An = 2 * sp.integrate(integrand * sp.sin(n * pi * x), (x, 0, 1))
+                integrand=ex.subs(x if sd in ['top','bottom'] else y, x)
+                try: An=2*sp.integrate(integrand*sp.sin(n*pi*x),(x,0,1))
                 except: return None
-
-                den = sp.sinh(n * pi)
-                if side == 'top': return An * sp.sin(n*pi*x) * sp.sinh(n*pi*y) / den
-                if side == 'bottom': return An * sp.sin(n*pi*x) * sp.sinh(n*pi*(1-y)) / den
-                if side == 'left': return An * sp.sin(n*pi*y) * sp.sinh(n*pi*(1-x)) / den
-                if side == 'right': return An * sp.sin(n*pi*y) * sp.sinh(n*pi*x) / den
-                return None
-
-            for s, sd in [(ts, 'top'), (bs, 'bottom'), (ls, 'left'), (rs, 'right')]:
-                r = calculate_boundary_contribution(s, sd)
+                den=sp.sinh(n*pi)
+                if sd=='top': return An*sp.sin(n*pi*x)*sp.sinh(n*pi*y)/den
+                if sd=='bottom': return An*sp.sin(n*pi*x)*sp.sinh(n*pi*(1-y))/den
+                if sd=='left': return An*sp.sin(n*pi*y)*sp.sinh(n*pi*(1-x))/den
+                if sd=='right': return An*sp.sin(n*pi*y)*sp.sinh(n*pi*x)/den
+            for s,sd in [(ts,'top'),(bs,'bottom'),(ls,'left'),(rs,'right')]:
+                r=calc(s,sd); 
                 if r: terms.append(r)
-            
             if terms:
-                Vt = sum(terms)
-                st.latex(f"V(x,y) = \\sum_{{n=1}}^{{\\infty}} \\left[ {sp.latex(Vt)} \\right]")
-                
-                X, Y = np.meshgrid(np.linspace(0, 1, 50), np.linspace(0, 1, 50))
-                Vn = np.zeros_like(X)
-                
+                Vt=sum(terms)
+                st.session_state['res_2d_cart_ana_text'] = sp.latex(Vt)
+                X,Y=np.meshgrid(np.linspace(0,1,50),np.linspace(0,1,50)); Vn=np.zeros_like(X)
                 try:
-                    # 轉為 numpy 函數前先處理符號
-                    fn = sp.lambdify((n, x, y), Vt, 'numpy')
-                    progress_bar = st.progress(0)
-                    
-                    for i in range(1, 21): 
-                        Vn += np.nan_to_num(fn(i, X, Y))
-                        progress_bar.progress(i / 20)
-                    
-                    st.pyplot(plot_heatmap(Vn, "Analytical Solution (First 20 terms)"))
-                except Exception as e:
-                    st.error(f"數值計算錯誤: {e}")
-            else:
-                st.warning("沒有有效的邊界條件輸入或積分結果為零")
-
+                    fn=sp.lambdify((n,x,y),Vt,'numpy'); p=st.progress(0)
+                    for i in range(1,21): Vn+=np.nan_to_num(fn(i,X,Y)); p.progress(i/20)
+                    st.session_state['res_2d_cart_ana'] = Vn
+                except Exception as e: st.error(e)
+        
+        if st.session_state['res_2d_cart_ana'] is not None:
+            if st.session_state.get('res_2d_cart_ana_text'):
+                st.latex(f"V(x,y) = \\sum_{{n=1}}^{{\\infty}} \\left[ {st.session_state['res_2d_cart_ana_text']} \\right]")
+            st.pyplot(plot_heatmap(st.session_state['res_2d_cart_ana'], "Analytical Solution"))
 
 def render_potential_spherical_2d():
     st.subheader("🌐 2D 極座標/球座標切面電位分析")
