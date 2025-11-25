@@ -259,7 +259,7 @@ def calculate_continuous_spherical(dist_type, R, grid_range, grid_res):
                 dV = (r_s**2) * np.sin(theta_s) * dr * dtheta * dphi
                 dq = rho * dV
                 
-                # 弧度轉直角 (手動計算避免依賴外部函數)
+                # 弧度轉直角
                 cx = r_s * np.sin(theta_s) * np.cos(phi_s)
                 cy = r_s * np.sin(theta_s) * np.sin(phi_s)
                 cz = r_s * np.cos(theta_s)
@@ -727,35 +727,35 @@ def render_3d_cartesian():
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
-            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0, key="viz_mode_cart"
         )
         
         st.divider()
         st.header("⚙️ 3D 模擬參數")
-        grid_n = st.slider("網格點數 (N)", 10, 60, 30)
+        grid_n = st.slider("網格點數 (N)", 10, 60, 30, key="grid_n_cart")
         
         with st.expander("設定邊界電位 (Boundary)", expanded=True):
             c1, c2 = st.columns(2)
-            v_top = c1.number_input("頂面 (Z=1)", value=100.0, step=10.0)
-            v_bottom = c2.number_input("底面 (Z=0)", value=-100.0, step=10.0)
-            v_back = c1.number_input("後面 (Y=1)", value=0.0, step=10.0)
-            v_front = c2.number_input("前面 (Y=0)", value=0.0, step=10.0)
-            v_right = c1.number_input("右面 (X=1)", value=0.0, step=10.0)
-            v_left = c2.number_input("左面 (X=0)", value=0.0, step=10.0)
+            v_top = c1.number_input("頂面 (Z=1)", value=100.0, step=10.0, key="v_top")
+            v_bottom = c2.number_input("底面 (Z=0)", value=-100.0, step=10.0, key="v_bottom")
+            v_back = c1.number_input("後面 (Y=1)", value=0.0, step=10.0, key="v_back")
+            v_front = c2.number_input("前面 (Y=0)", value=0.0, step=10.0, key="v_front")
+            v_right = c1.number_input("右面 (X=1)", value=0.0, step=10.0, key="v_right")
+            v_left = c2.number_input("左面 (X=0)", value=0.0, step=10.0, key="v_left")
 
-        max_iter = st.number_input("最大迭代", 3000, step=500)
-        tolerance = st.select_slider("精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4)
+        max_iter = st.number_input("最大迭代", 3000, step=500, key="max_iter_cart")
+        tolerance = st.select_slider("精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4, key="tol_cart")
         
         st.divider()
         st.header("🎨 繪圖微調")
         if viz_mode == "電位分佈 (Potential)":
-            surface_count = st.slider("等位面層數", 3, 20, 10)
-            opacity = st.slider("透明度", 0.1, 1.0, 0.3)
-            show_caps = st.checkbox("顯示封蓋 (Caps)", False)
+            surface_count = st.slider("等位面層數", 3, 20, 10, key="surf_count_cart")
+            opacity = st.slider("透明度", 0.1, 1.0, 0.3, key="opacity_cart")
+            show_caps = st.checkbox("顯示封蓋 (Caps)", False, key="caps_cart")
         else:
             st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
-            cone_scale = st.slider("箭頭固定大小", 0.05, 0.2, 0.1)
-            stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2)
+            cone_scale = st.slider("箭頭固定大小", 0.05, 0.2, 0.1, key="cone_scale_cart")
+            stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2, key="stride_cart")
 
     # 2. 計算按鈕
     if st.sidebar.button("🚀 開始模擬", key="btn_3d_cart"):
@@ -783,8 +783,7 @@ def render_3d_cartesian():
             fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            # 使用優化後的 Log-Scale 繪圖
-            fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
             st.plotly_chart(fig, use_container_width=True)
 
 def render_3d_point_charge():
@@ -794,13 +793,13 @@ def render_3d_point_charge():
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
-            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0, key="viz_mode_point"
         )
         
         st.divider()
         st.header("⚙️ 空間設定")
-        grid_range = st.slider("空間範圍 (±)", 1.0, 5.0, 2.5, 0.1)
-        grid_res = st.slider("網格解析度", 10, 40, 20)
+        grid_range = st.slider("空間範圍 (±)", 1.0, 5.0, 2.5, 0.1, key="grid_range_point")
+        grid_res = st.slider("網格解析度", 10, 40, 20, key="grid_res_point")
 
         st.divider()
         st.header("🔋 電荷管理")
@@ -808,9 +807,10 @@ def render_3d_point_charge():
         nx = c1.number_input("X", 0.0, step=0.5, key="nx")
         ny = c2.number_input("Y", 0.0, step=0.5, key="ny")
         nz = c3.number_input("Z", 0.0, step=0.5, key="nz")
+        # Fix: use keyword 'value' to avoid setting min_value by positional arg
         nq = c4.number_input("Q", value=1.0, step=1.0, key="nq")
         
-        if st.button("➕ 新增電荷", use_container_width=True):
+        if st.button("➕ 新增電荷", use_container_width=True, key="btn_add_point"):
             st.session_state.point_charges_3d.append({'x':nx, 'y':ny, 'z':nz, 'q':nq})
         
         st.write("目前電荷：")
@@ -824,27 +824,27 @@ def render_3d_point_charge():
         else:
             st.warning("無電荷")
             
-        if st.button("🗑️ 清空", use_container_width=True):
+        if st.button("🗑️ 清空", use_container_width=True, key="btn_clr_point"):
             st.session_state.point_charges_3d = []
             st.rerun()
 
         st.divider()
         st.header("🎨 繪圖微調")
         if viz_mode == "電位分佈 (Potential)":
-            surface_count = st.slider("等位面層數", 3, 20, 10)
-            opacity = st.slider("透明度", 0.1, 1.0, 0.3)
-            show_caps = st.checkbox("顯示封蓋", False)
+            surface_count = st.slider("等位面層數", 3, 20, 10, key="surf_count_point")
+            opacity = st.slider("透明度", 0.1, 1.0, 0.3, key="opacity_point")
+            show_caps = st.checkbox("顯示封蓋", False, key="caps_point")
         else:
             st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
-            cone_scale = st.slider("箭頭大小", 0.3, 1.0, 0.5)
-            stride_val = st.slider("採樣間隔", 1, 3, 1)
+            cone_scale = st.slider("箭頭大小", 0.3, 1.0, 0.5, key="cone_scale_point")
+            stride_val = st.slider("採樣間隔", 1, 3, 1, key="stride_point")
 
     if not st.session_state.point_charges_3d:
         st.info("請先在左側新增電荷")
         return
 
     # 計算按鈕
-    if st.sidebar.button("🚀 開始模擬", key="btn_3d_point"):
+    if st.sidebar.button("🚀 開始模擬", key="btn_3d_point_sim"):
         charges_tuple = tuple(st.session_state.point_charges_3d)
         with st.spinner("3D 庫倫運算中..."):
             start_time = time.time()
@@ -873,8 +873,7 @@ def render_3d_point_charge():
                     name=f"Q={q['q']}", showlegend=False
                 ))
         else:
-            # 使用優化後的 Log-Scale 繪圖
-            fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
             # 加上電荷點
             for q in st.session_state.point_charges_3d:
                 color = 'red' if q['q'] > 0 else 'blue'
@@ -893,7 +892,7 @@ def render_3d_spherical():
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
-            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0, key="viz_mode_sph"
         )
         
         st.divider()
@@ -902,23 +901,23 @@ def render_3d_spherical():
         # 分佈類型選擇
         dist_type = st.selectbox(
             "電荷分佈模型",
-            ["Uniform (均勻)", "Decaying (1/r)", "Orbital (p-like)"]
+            ["Uniform (均勻)", "Decaying (1/r)", "Orbital (p-like)"], key="dist_type"
         )
         
-        R = st.slider("球體半徑 (R)", 0.5, 2.0, 1.2)
-        grid_range = st.slider("空間範圍 (±)", 1.0, 4.0, 2.0)
-        grid_res = st.slider("網格解析度", 10, 30, 18)
+        R = st.slider("球體半徑 (R)", 0.5, 2.0, 1.2, key="R_sph")
+        grid_range = st.slider("空間範圍 (±)", 1.0, 4.0, 2.0, key="grid_range_sph")
+        grid_res = st.slider("網格解析度", 10, 30, 18, key="grid_res_sph")
 
         st.divider()
         st.header("🎨 繪圖微調")
         if viz_mode == "電位分佈 (Potential)":
-            surface_count = st.slider("等位面層數", 3, 20, 10)
-            opacity = st.slider("透明度", 0.1, 1.0, 0.3)
-            show_caps = st.checkbox("顯示封蓋", False)
+            surface_count = st.slider("等位面層數", 3, 20, 10, key="surf_count_sph")
+            opacity = st.slider("透明度", 0.1, 1.0, 0.3, key="opacity_sph")
+            show_caps = st.checkbox("顯示封蓋", False, key="caps_sph")
         else:
             st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
-            cone_scale = st.slider("箭頭大小", 0.05, 0.5, 0.15)
-            stride_val = st.slider("採樣間隔", 1, 3, 1)
+            cone_scale = st.slider("箭頭大小", 0.05, 0.5, 0.15, key="cone_scale_sph")
+            stride_val = st.slider("採樣間隔", 1, 3, 1, key="stride_sph")
 
     # 計算按鈕
     if st.sidebar.button("🚀 開始模擬", key="btn_3d_continuous"):
@@ -970,10 +969,6 @@ elif cat == "電位+電場模擬 (2D)":
     elif sub == "球座標": render_potential_spherical_2d()
     elif sub == "點電荷": render_potential_point_charge()
 elif cat == "電位+電場模擬 (3D)":
-    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
-    if sub == "笛卡爾": render_3d_cartesian()
-    elif sub == "球座標": render_3d_spherical()
-    elif sub == "點電荷": render_3d_point_charge()
     sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
     if sub == "笛卡爾": render_3d_cartesian()
     elif sub == "球座標": render_3d_spherical()
