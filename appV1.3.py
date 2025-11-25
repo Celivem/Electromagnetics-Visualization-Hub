@@ -225,7 +225,7 @@ def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
     return X, Y, Z, V, Ex, Ey, Ez
 
 @st.cache_data(show_spinner=False)
-def calculate_continuous_spherical(dist_type, R, grid_range, grid_res):
+def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_res):
     """計算連續球體電荷分佈產生的場 (Discretization Method)"""
     x = np.linspace(-grid_range, grid_range, grid_res)
     y = np.linspace(-grid_range, grid_range, grid_res)
@@ -247,14 +247,33 @@ def calculate_continuous_spherical(dist_type, R, grid_range, grid_res):
     theta_range = np.linspace(dtheta/2, np.pi - dtheta/2, num_theta)
     phi_range = np.linspace(dphi/2, 2*np.pi - dphi/2, num_phi)
     
+    # 準備自訂表達式的解析函數
+    rho_func = None
+    if dist_type == "Custom (自訂)" and custom_expr:
+        try:
+            r_sym, theta_sym, phi_sym = sp.symbols('r theta phi')
+            local_d = {'e': sp.E, 'pi': sp.pi, 'r': r_sym, 'theta': theta_sym, 'phi': phi_sym, 
+                       'sin': sp.sin, 'cos': sp.cos, 'exp': sp.exp, 'abs': sp.Abs, 'sqrt': sp.sqrt}
+            trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
+            expr = parse_expr(custom_expr, local_dict=local_d, transformations=trans)
+            rho_func = sp.lambdify((r_sym, theta_sym, phi_sym), expr, 'numpy')
+        except Exception as e:
+            # 如果解析失敗，稍後在迴圈中處理或直接視為0
+            pass
+
     source_charges = []
     for r_s in r_range:
         for theta_s in theta_range:
             for phi_s in phi_range:
+                rho = 1.0
                 if dist_type == "Uniform (均勻)": rho = 1.0
                 elif dist_type == "Decaying (1/r)": rho = 1.0 / r_s
                 elif dist_type == "Orbital (p-like)": rho = np.abs(np.cos(theta_s)) * 2.0
-                else: rho = 1.0
+                elif dist_type == "Custom (自訂)" and rho_func:
+                    try:
+                        rho = float(rho_func(r_s, theta_s, phi_s))
+                    except:
+                        rho = 0.0
                 
                 dV = (r_s**2) * np.sin(theta_s) * dr * dtheta * dphi
                 dq = rho * dV
@@ -901,8 +920,16 @@ def render_3d_spherical():
         # 分佈類型選擇
         dist_type = st.selectbox(
             "電荷分佈模型",
-            ["Uniform (均勻)", "Decaying (1/r)", "Orbital (p-like)"], key="dist_type"
+            ["Uniform (均勻)", "Decaying (1/r)", "Orbital (p-like)", "Custom (自訂)"], key="dist_type"
         )
+        
+        custom_expr = None
+        if dist_type == "Custom (自訂)":
+            custom_expr = st.text_input(
+                "輸入電荷密度 ρ(r, theta, phi)", 
+                value="r * cos(theta)",
+                help="可用變數: r, theta, phi。支援 numpy 函數如 sin, cos, exp 等。"
+            )
         
         R = st.slider("球體半徑 (R)", 0.5, 2.0, 1.2, key="R_sph")
         grid_range = st.slider("空間範圍 (±)", 1.0, 4.0, 2.0, key="grid_range_sph")
@@ -923,7 +950,7 @@ def render_3d_spherical():
     if st.sidebar.button("🚀 開始模擬", key="btn_3d_continuous"):
         with st.spinner("正在進行微積分疊加運算 (這可能需要幾秒鐘)..."):
             start_time = time.time()
-            results = calculate_continuous_spherical(dist_type, R, grid_range, grid_res)
+            results = calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_res)
             end_time = time.time()
             st.session_state['res_3d_continuous'] = (results, end_time - start_time)
 
