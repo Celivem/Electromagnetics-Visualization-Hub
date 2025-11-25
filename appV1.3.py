@@ -48,10 +48,11 @@ default_states = {
     'res_2d_point': None,
     'res_2d_cart_num': None,
     'res_2d_cart_ana': None,
-    'res_2d_cart_ana_text': None, # 新增：用於儲存 2D 解析解的公式字串
+    'res_2d_cart_ana_text': None,
     'res_2d_sphere': None,
     'res_3d_cart': None,
-    'res_3d_point': None
+    'res_3d_point': None,
+    'res_3d_continuous': None # 新增：連續分佈計算結果
 }
 
 for key, val in default_states.items():
@@ -94,6 +95,13 @@ def smart_parse(input_str):
         return parse_expr(input_str, transformations=transformations, local_dict={'e': sp.E, 'pi': sp.pi})
     except:
         return None
+
+def spherical_to_cartesian(r, theta, phi):
+    """球座標轉直角座標 (輸入為弧度)"""
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+    return x, y, z
 
 # --- 2D 快取運算 ---
 @st.cache_data(show_spinner=False)
@@ -210,7 +218,83 @@ def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
 
     return X, Y, Z, V, Ex, Ey, Ez
 
-# --- 3D 視覺化 (分組渲染法) ---
+@st.cache_data(show_spinner=False)
+def calculate_continuous_spherical(dist_type, R, grid_range, grid_res):
+    """
+    計算連續球體電荷分佈產生的場 (Discretization Method)
+    """
+    # 1. 建立觀察網格 (Target Grid)
+    x = np.linspace(-grid_range, grid_range, grid_res)
+    y = np.linspace(-grid_range, grid_range, grid_res)
+    z = np.linspace(-grid_range, grid_range, grid_res)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    
+    V = np.zeros_like(X)
+    Ex = np.zeros_like(X)
+    Ey = np.zeros_like(X)
+    Ez = np.zeros_like(X)
+    
+    # 2. 離散化來源 (Source Discretization)
+    # 為了效能，固定來源解析度
+    num_r, num_theta, num_phi = 8, 12, 12
+    
+    dr = R / num_r
+    dtheta = np.pi / num_theta
+    dphi = 2 * np.pi / num_phi
+    
+    # 使用 Midpoint 提升精度
+    r_range = np.linspace(dr/2, R - dr/2, num_r)
+    theta_range = np.linspace(dtheta/2, np.pi - dtheta/2, num_theta)
+    phi_range = np.linspace(dphi/2, 2*np.pi - dphi/2, num_phi)
+    
+    source_charges = []
+    
+    for r_s in r_range:
+        for theta_s in theta_range:
+            for phi_s in phi_range:
+                # 根據類型決定電荷密度 rho
+                if dist_type == "Uniform (均勻)":
+                    rho = 1.0
+                elif dist_type == "Decaying (1/r)":
+                    rho = 1.0 / r_s
+                elif dist_type == "Orbital (p-like)":
+                    rho = np.abs(np.cos(theta_s)) * 2.0
+                else:
+                    rho = 1.0
+                
+                # 體積微元 dV
+                dV = (r_s**2) * np.sin(theta_s) * dr * dtheta * dphi
+                dq = rho * dV
+                
+                # 轉直角
+                cx, cy, cz = spherical_to_cartesian(r_s, theta_s, phi_s)
+                source_charges.append((cx, cy, cz, dq))
+    
+    # 3. 疊加計算 (Superposition)
+    # 這裡用迴圈疊加，對於 ~1000 個源電荷 x ~8000 個目標點，Python迴圈尚可接受 (約1-2秒)
+    k_e = 1.0
+    for cx, cy, cz, dq in source_charges:
+        dx = X - cx
+        dy = Y - cy
+        dz = Z - cz
+        dist_sq = dx**2 + dy**2 + dz**2
+        dist = np.sqrt(dist_sq)
+        
+        # 軟化因子 (Softening) 避免除以零
+        dist = np.where(dist < 0.15, 0.15, dist)
+        
+        # 疊加 V
+        V += k_e * dq / dist
+        
+        # 疊加 E
+        E_common = k_e * dq / (dist**3)
+        Ex += E_common * dx
+        Ey += E_common * dy
+        Ez += E_common * dz
+        
+    return X, Y, Z, V, Ex, Ey, Ez, len(source_charges)
+
+# --- 3D 視覺化 (改良版：Log-Binning) ---
 
 def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     """繪製 3D 電位等位面"""
@@ -232,8 +316,12 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     )
     return fig
 
-def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """繪製 3D 電場 (固定大小 + 彩虹顏色)"""
+def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
+    """
+    繪製 3D 電場 (固定大小 + Log-Scale 彩虹顏色)
+    使用 Log10 對場強進行分組，解決場強跨度過大的視覺問題
+    """
+    # 1. 降採樣
     X_sub = X[::stride, ::stride, ::stride].flatten()
     Y_sub = Y[::stride, ::stride, ::stride].flatten()
     Z_sub = Z[::stride, ::stride, ::stride].flatten()
@@ -241,39 +329,53 @@ def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
     Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
     Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
     
+    # 2. 計算強度
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
     E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
+    
+    # 3. 歸一化 (固定箭頭長度)
     U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
     V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
     W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
 
-    fig = go.Figure()
+    # 4. Log Scale Binning
+    log_mag = np.log10(E_mag_safe)
+    
+    # 為了視覺效果，去掉極端的 5% 值
+    vmin = np.percentile(log_mag, 5)
+    vmax = np.percentile(log_mag, 95)
     
     n_bins = 20
-    cmap = plt.get_cmap('jet')
-    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
     bins = np.linspace(vmin, vmax, n_bins)
-    indices = np.digitize(E_mag, bins) - 1
+    indices = np.digitize(log_mag, bins) - 1
     indices = np.clip(indices, 0, n_bins - 1)
+    
+    cmap = plt.get_cmap('jet')
+    fig = go.Figure()
     
     for i in range(n_bins):
         mask = (indices == i)
         if not np.any(mask): continue
+        
+        # 顏色映射
         color_val = i / (n_bins - 1)
         hex_color = mcolors.to_hex(cmap(color_val))
         
         fig.add_trace(go.Cone(
             x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
             u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
-            colorscale=[[0, hex_color], [1, hex_color]],
+            colorscale=[[0, hex_color], [1, hex_color]], # 單色
             showscale=False,
             sizemode="scaled",
             sizeref=scale,
             anchor="tail",
-            hoverinfo='u+v+w+name',
-            name=f"E ~ {bins[i]:.2e}"
+            hoverinfo='text',
+            text=f"Log(|E|) ~ {bins[i]:.2f}",
+            name=f"Level {i}"
         ))
 
+    # 5. 偽造 Colorbar (顯示 Log 值或原始值)
+    # 這裡顯示 Log 值比較直觀對應顏色分佈
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
@@ -281,12 +383,12 @@ def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
             colorscale='Jet',
             cmin=vmin, cmax=vmax,
             showscale=True,
-            colorbar=dict(title='電場強度 |E|', x=0.9)
+            colorbar=dict(title='Log10(|E|)', x=0.9)
         )
     ))
 
     fig.update_layout(
-        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
+        title="3D 電場向量分佈 (Log-Scale Intensity)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
         margin=dict(l=0, r=0, b=0, t=40), height=700,
         showlegend=False
@@ -552,8 +654,7 @@ def render_potential_spherical_2d():
                 Z_V = func_V(R, THETA)
                 if np.isscalar(Z_V): Z_V = np.full_like(R, Z_V)
                 
-                # Store results including functions for streamlines recalculation if needed (or just store data arrays)
-                # Storing data arrays is safer for simple visual updates
+                # Store results including functions for streamlines recalculation if needed
                 U_Er = func_Er(R, THETA); U_Et = func_Et(R, THETA)
                 if np.isscalar(U_Er): U_Er = np.full_like(R, U_Er)
                 if np.isscalar(U_Et): U_Et = np.full_like(R, U_Et)
@@ -603,12 +704,12 @@ def render_3d_cartesian():
         
         with st.expander("設定邊界電位 (Boundary)", expanded=True):
             c1, c2 = st.columns(2)
-            v_top = c1.number_input("頂面 (Z=1)", 100.0, step=10.0)
-            v_bottom = c2.number_input("底面 (Z=0)", -100.0, step=10.0)
-            v_back = c1.number_input("後面 (Y=1)", 0.0, step=10.0)
-            v_front = c2.number_input("前面 (Y=0)", 0.0, step=10.0)
-            v_right = c1.number_input("右面 (X=1)", 0.0, step=10.0)
-            v_left = c2.number_input("左面 (X=0)", 0.0, step=10.0)
+            v_top = c1.number_input("頂面 (Z=1)", value=100.0, step=10.0)
+            v_bottom = c2.number_input("底面 (Z=0)", value=-100.0, step=10.0)
+            v_back = c1.number_input("後面 (Y=1)", value=0.0, step=10.0)
+            v_front = c2.number_input("前面 (Y=0)", value=0.0, step=10.0)
+            v_right = c1.number_input("右面 (X=1)", value=0.0, step=10.0)
+            v_left = c2.number_input("左面 (X=0)", value=0.0, step=10.0)
 
         max_iter = st.number_input("最大迭代", 3000, step=500)
         tolerance = st.select_slider("精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4)
@@ -650,7 +751,8 @@ def render_3d_cartesian():
             fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            # 使用優化後的 Log-Scale 繪圖
+            fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
             st.plotly_chart(fig, use_container_width=True)
 
 def render_3d_point_charge():
@@ -674,7 +776,7 @@ def render_3d_point_charge():
         nx = c1.number_input("X", 0.0, step=0.5, key="nx")
         ny = c2.number_input("Y", 0.0, step=0.5, key="ny")
         nz = c3.number_input("Z", 0.0, step=0.5, key="nz")
-        nq = c4.number_input("Q", 1.0, step=1.0, key="nq")
+        nq = c4.number_input("Q", value=1.0, step=1.0, key="nq")
         
         if st.button("➕ 新增電荷", use_container_width=True):
             st.session_state.point_charges_3d.append({'x':nx, 'y':ny, 'z':nz, 'q':nq})
@@ -739,7 +841,8 @@ def render_3d_point_charge():
                     name=f"Q={q['q']}", showlegend=False
                 ))
         else:
-            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            # 使用優化後的 Log-Scale 繪圖
+            fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
             # 加上電荷點
             for q in st.session_state.point_charges_3d:
                 color = 'red' if q['q'] > 0 else 'blue'
@@ -749,6 +852,67 @@ def render_3d_point_charge():
                     text=[f"Q={q['q']}"], textposition="top center", name=f"Q={q['q']}"
                 ))
                 
+        st.plotly_chart(fig, use_container_width=True)
+
+def render_3d_spherical():
+    st.subheader("⚡ 3D 球座標模擬：連續電荷分佈")
+    st.markdown("模擬**連續電荷**在球體內的分布。程式會將球體切割成數千個微分單元，利用疊加原理計算場。")
+
+    with st.sidebar:
+        st.markdown("---")
+        viz_mode = st.radio(
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0
+        )
+        
+        st.divider()
+        st.header("⚙️ 模擬設定")
+        
+        # 分佈類型選擇
+        dist_type = st.selectbox(
+            "電荷分佈模型",
+            ["Uniform (均勻)", "Decaying (1/r)", "Orbital (p-like)"]
+        )
+        
+        R = st.slider("球體半徑 (R)", 0.5, 2.0, 1.2)
+        grid_range = st.slider("空間範圍 (±)", 1.0, 4.0, 2.0)
+        grid_res = st.slider("網格解析度", 10, 30, 18)
+
+        st.divider()
+        st.header("🎨 繪圖微調")
+        if viz_mode == "電位分佈 (Potential)":
+            surface_count = st.slider("等位面層數", 3, 20, 10)
+            opacity = st.slider("透明度", 0.1, 1.0, 0.3)
+            show_caps = st.checkbox("顯示封蓋", False)
+        else:
+            st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
+            cone_scale = st.slider("箭頭大小", 0.05, 0.5, 0.15)
+            stride_val = st.slider("採樣間隔", 1, 3, 1)
+
+    # 計算按鈕
+    if st.sidebar.button("🚀 開始模擬", key="btn_3d_continuous"):
+        with st.spinner("正在進行微積分疊加運算 (這可能需要幾秒鐘)..."):
+            start_time = time.time()
+            results = calculate_continuous_spherical(dist_type, R, grid_range, grid_res)
+            end_time = time.time()
+            st.session_state['res_3d_continuous'] = (results, end_time - start_time)
+
+    # 繪圖
+    if st.session_state['res_3d_continuous']:
+        (X, Y, Z, V, Ex, Ey, Ez, n_sources), elapsed_time = st.session_state['res_3d_continuous']
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("微分單元數", f"{n_sources}")
+        E_mag = np.sqrt(Ex**2 + Ey**2 + Ez**2)
+        c2.metric("Max |E|", f"{np.max(E_mag):.1f}")
+        c3.metric("Time", f"{elapsed_time:.3f} s")
+
+        st.divider()
+        
+        if viz_mode == "電位分佈 (Potential)":
+            fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+        else:
+            fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            
         st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
@@ -776,5 +940,5 @@ elif cat == "電位+電場模擬 (2D)":
 elif cat == "電位+電場模擬 (3D)":
     sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
     if sub == "笛卡爾": render_3d_cartesian()
-    elif sub == "球座標": render_developing("3D 球座標模擬")
+    elif sub == "球座標": render_3d_spherical()
     elif sub == "點電荷": render_3d_point_charge()
