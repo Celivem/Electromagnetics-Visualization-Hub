@@ -42,6 +42,10 @@ default_states = {
         {'x': 1.0, 'y': 0.0, 'z': 0.0, 'q': 1.0}, 
         {'x': -1.0, 'y': 0.0, 'z': 0.0, 'q': -1.0}
     ],
+    'point_charges_spherical': [
+        {'r': 1.5, 'theta': 0.0, 'phi': 0.0, 'q': 1.0},
+        {'r': 1.5, 'theta': 180.0, 'phi': 0.0, 'q': -1.0}
+    ],
     'legendre_coeffs': None,
     'legendre_func': None,
     # 模擬結果暫存
@@ -52,7 +56,7 @@ default_states = {
     'res_2d_sphere': None,
     'res_3d_cart': None,
     'res_3d_point': None,
-    'res_3d_continuous': None # 新增：連續分佈計算結果
+    'res_3d_continuous': None
 }
 
 for key, val in default_states.items():
@@ -96,8 +100,10 @@ def smart_parse(input_str):
     except:
         return None
 
-def spherical_to_cartesian(r, theta, phi):
-    """球座標轉直角座標 (輸入為弧度)"""
+def spherical_to_cartesian(r, theta_deg, phi_deg):
+    """球座標轉直角座標 (輸入為角度)"""
+    theta = np.deg2rad(theta_deg)
+    phi = np.deg2rad(phi_deg)
     x = r * np.sin(theta) * np.cos(phi)
     y = r * np.sin(theta) * np.sin(phi)
     z = r * np.cos(theta)
@@ -220,10 +226,7 @@ def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
 
 @st.cache_data(show_spinner=False)
 def calculate_continuous_spherical(dist_type, R, grid_range, grid_res):
-    """
-    計算連續球體電荷分佈產生的場 (Discretization Method)
-    """
-    # 1. 建立觀察網格 (Target Grid)
+    """計算連續球體電荷分佈產生的場 (Discretization Method)"""
     x = np.linspace(-grid_range, grid_range, grid_res)
     y = np.linspace(-grid_range, grid_range, grid_res)
     z = np.linspace(-grid_range, grid_range, grid_res)
@@ -234,63 +237,44 @@ def calculate_continuous_spherical(dist_type, R, grid_range, grid_res):
     Ey = np.zeros_like(X)
     Ez = np.zeros_like(X)
     
-    # 2. 離散化來源 (Source Discretization)
-    # 為了效能，固定來源解析度
+    # 固定來源解析度
     num_r, num_theta, num_phi = 8, 12, 12
-    
     dr = R / num_r
     dtheta = np.pi / num_theta
     dphi = 2 * np.pi / num_phi
     
-    # 使用 Midpoint 提升精度
     r_range = np.linspace(dr/2, R - dr/2, num_r)
     theta_range = np.linspace(dtheta/2, np.pi - dtheta/2, num_theta)
     phi_range = np.linspace(dphi/2, 2*np.pi - dphi/2, num_phi)
     
     source_charges = []
-    
     for r_s in r_range:
         for theta_s in theta_range:
             for phi_s in phi_range:
-                # 根據類型決定電荷密度 rho
-                if dist_type == "Uniform (均勻)":
-                    rho = 1.0
-                elif dist_type == "Decaying (1/r)":
-                    rho = 1.0 / r_s
-                elif dist_type == "Orbital (p-like)":
-                    rho = np.abs(np.cos(theta_s)) * 2.0
-                else:
-                    rho = 1.0
+                if dist_type == "Uniform (均勻)": rho = 1.0
+                elif dist_type == "Decaying (1/r)": rho = 1.0 / r_s
+                elif dist_type == "Orbital (p-like)": rho = np.abs(np.cos(theta_s)) * 2.0
+                else: rho = 1.0
                 
-                # 體積微元 dV
                 dV = (r_s**2) * np.sin(theta_s) * dr * dtheta * dphi
                 dq = rho * dV
                 
-                # 轉直角
-                cx, cy, cz = spherical_to_cartesian(r_s, theta_s, phi_s)
+                # 弧度轉直角 (手動計算避免依賴外部函數)
+                cx = r_s * np.sin(theta_s) * np.cos(phi_s)
+                cy = r_s * np.sin(theta_s) * np.sin(phi_s)
+                cz = r_s * np.cos(theta_s)
                 source_charges.append((cx, cy, cz, dq))
     
-    # 3. 疊加計算 (Superposition)
-    # 這裡用迴圈疊加，對於 ~1000 個源電荷 x ~8000 個目標點，Python迴圈尚可接受 (約1-2秒)
     k_e = 1.0
     for cx, cy, cz, dq in source_charges:
-        dx = X - cx
-        dy = Y - cy
-        dz = Z - cz
+        dx = X - cx; dy = Y - cy; dz = Z - cz
         dist_sq = dx**2 + dy**2 + dz**2
         dist = np.sqrt(dist_sq)
-        
-        # 軟化因子 (Softening) 避免除以零
         dist = np.where(dist < 0.15, 0.15, dist)
         
-        # 疊加 V
         V += k_e * dq / dist
-        
-        # 疊加 E
         E_common = k_e * dq / (dist**3)
-        Ex += E_common * dx
-        Ey += E_common * dy
-        Ez += E_common * dz
+        Ex += E_common * dx; Ey += E_common * dy; Ez += E_common * dz
         
     return X, Y, Z, V, Ex, Ey, Ez, len(source_charges)
 
@@ -317,11 +301,7 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     return fig
 
 def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """
-    繪製 3D 電場 (固定大小 + Log-Scale 彩虹顏色)
-    使用 Log10 對場強進行分組，解決場強跨度過大的視覺問題
-    """
-    # 1. 降採樣
+    """繪製 3D 電場 (固定大小 + Log-Scale 彩虹顏色)"""
     X_sub = X[::stride, ::stride, ::stride].flatten()
     Y_sub = Y[::stride, ::stride, ::stride].flatten()
     Z_sub = Z[::stride, ::stride, ::stride].flatten()
@@ -329,19 +309,14 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
     Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
     Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
     
-    # 2. 計算強度
     E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
     E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
     
-    # 3. 歸一化 (固定箭頭長度)
     U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
     V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
     W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
 
-    # 4. Log Scale Binning
     log_mag = np.log10(E_mag_safe)
-    
-    # 為了視覺效果，去掉極端的 5% 值
     vmin = np.percentile(log_mag, 5)
     vmax = np.percentile(log_mag, 95)
     
@@ -356,15 +331,13 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
     for i in range(n_bins):
         mask = (indices == i)
         if not np.any(mask): continue
-        
-        # 顏色映射
         color_val = i / (n_bins - 1)
         hex_color = mcolors.to_hex(cmap(color_val))
         
         fig.add_trace(go.Cone(
             x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
             u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
-            colorscale=[[0, hex_color], [1, hex_color]], # 單色
+            colorscale=[[0, hex_color], [1, hex_color]],
             showscale=False,
             sizemode="scaled",
             sizeref=scale,
@@ -374,8 +347,6 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
             name=f"Level {i}"
         ))
 
-    # 5. 偽造 Colorbar (顯示 Log 值或原始值)
-    # 這裡顯示 Log 值比較直觀對應顏色分佈
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
@@ -389,6 +360,67 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
 
     fig.update_layout(
         title="3D 電場向量分佈 (Log-Scale Intensity)",
+        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
+        margin=dict(l=0, r=0, b=0, t=40), height=700,
+        showlegend=False
+    )
+    return fig
+
+def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
+    """繪製 3D 電場 (固定大小 + 彩虹顏色 - Linear)"""
+    X_sub = X[::stride, ::stride, ::stride].flatten()
+    Y_sub = Y[::stride, ::stride, ::stride].flatten()
+    Z_sub = Z[::stride, ::stride, ::stride].flatten()
+    Ex_sub = Ex[::stride, ::stride, ::stride].flatten()
+    Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
+    Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
+    
+    E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
+    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
+    U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
+    V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
+    W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
+
+    fig = go.Figure()
+    
+    n_bins = 20
+    cmap = plt.get_cmap('jet')
+    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
+    bins = np.linspace(vmin, vmax, n_bins)
+    indices = np.digitize(E_mag, bins) - 1
+    indices = np.clip(indices, 0, n_bins - 1)
+    
+    for i in range(n_bins):
+        mask = (indices == i)
+        if not np.any(mask): continue
+        color_val = i / (n_bins - 1)
+        hex_color = mcolors.to_hex(cmap(color_val))
+        
+        fig.add_trace(go.Cone(
+            x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
+            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
+            colorscale=[[0, hex_color], [1, hex_color]],
+            showscale=False,
+            sizemode="scaled",
+            sizeref=scale,
+            anchor="tail",
+            hoverinfo='u+v+w+name',
+            name=f"E ~ {bins[i]:.2e}"
+        ))
+
+    fig.add_trace(go.Scatter3d(
+        x=[None], y=[None], z=[None],
+        mode='markers',
+        marker=dict(
+            colorscale='Jet',
+            cmin=vmin, cmax=vmax,
+            showscale=True,
+            colorbar=dict(title='電場強度 |E|', x=0.9)
+        )
+    ))
+
+    fig.update_layout(
+        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
         margin=dict(l=0, r=0, b=0, t=40), height=700,
         showlegend=False
@@ -938,6 +970,10 @@ elif cat == "電位+電場模擬 (2D)":
     elif sub == "球座標": render_potential_spherical_2d()
     elif sub == "點電荷": render_potential_point_charge()
 elif cat == "電位+電場模擬 (3D)":
+    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
+    if sub == "笛卡爾": render_3d_cartesian()
+    elif sub == "球座標": render_3d_spherical()
+    elif sub == "點電荷": render_3d_point_charge()
     sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
     if sub == "笛卡爾": render_3d_cartesian()
     elif sub == "球座標": render_3d_spherical()
