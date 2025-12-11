@@ -7,7 +7,7 @@ import time
 from scipy.integrate import quad
 from scipy import special, signal
 from scipy.special import eval_legendre
-from scipy.interpolate import RegularGridInterpolator # 新增插值工具
+from scipy.interpolate import RegularGridInterpolator
 import pandas as pd
 import io
 import sympy as sp
@@ -290,78 +290,46 @@ def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_r
         
     return X, Y, Z, V, Ex, Ey, Ez, len(source_charges)
 
-# --- 新增功能：計算流線 (Streamlines) ---
+# --- 3D 流線計算 ---
 
 @st.cache_data(show_spinner=False)
 def calculate_streamlines(X, Y, Z, V, Ex, Ey, Ez, num_lines=30, max_steps=200):
-    """
-    計算電場流線軌跡
-    Returns: List of {x:[], y:[], z:[], v:[]}
-    """
-    # 建立插值器
-    x_range = X[:,0,0]
-    y_range = Y[0,:,0]
-    z_range = Z[0,0,:]
+    """計算電場流線軌跡"""
+    x_range = X[:,0,0]; y_range = Y[0,:,0]; z_range = Z[0,0,:]
     
-    # RegularGridInterpolator requires (z, y, x) or (x, y, z) depending on meshgrid indexing
-    # We used indexing='ij', so it matches (x, y, z)
     interp_Ex = RegularGridInterpolator((x_range, y_range, z_range), Ex, bounds_error=False, fill_value=0)
     interp_Ey = RegularGridInterpolator((x_range, y_range, z_range), Ey, bounds_error=False, fill_value=0)
     interp_Ez = RegularGridInterpolator((x_range, y_range, z_range), Ez, bounds_error=False, fill_value=0)
     interp_V  = RegularGridInterpolator((x_range, y_range, z_range), V, bounds_error=False, fill_value=0)
     
-    # 產生種子點 (Seeds)
-    # 在空間中隨機撒點，或者在特定平面撒點
-    # 這裡採用在空間中心區域隨機撒點
     min_bound = np.array([x_range[0], y_range[0], z_range[0]])
     max_bound = np.array([x_range[-1], y_range[-1], z_range[-1]])
     
     seeds = np.random.uniform(min_bound * 0.8, max_bound * 0.8, (num_lines, 3))
     
     streamlines = []
-    dt = (max_bound[0] - min_bound[0]) * 0.01 # 步長
+    dt = (max_bound[0] - min_bound[0]) * 0.01
     
     for seed in seeds:
         path = {'x': [], 'y': [], 'z': [], 'v': []}
-        curr_pos = seed.copy()
-        
-        # 雙向積分 (Forward & Backward)
         for direction in [1, -1]:
             curr_pos = seed.copy()
             for _ in range(max_steps):
-                # 檢查邊界
-                if np.any(curr_pos < min_bound) or np.any(curr_pos > max_bound):
-                    break
-                
-                # 取得該點場向量
+                if np.any(curr_pos < min_bound) or np.any(curr_pos > max_bound): break
                 try:
-                    ex = interp_Ex(curr_pos)[0]
-                    ey = interp_Ey(curr_pos)[0]
-                    ez = interp_Ez(curr_pos)[0]
+                    ex = interp_Ex(curr_pos)[0]; ey = interp_Ey(curr_pos)[0]; ez = interp_Ez(curr_pos)[0]
                     v_val = interp_V(curr_pos)[0]
-                except:
-                    break
+                except: break
                 
                 mag = np.sqrt(ex**2 + ey**2 + ez**2)
                 if mag < 1e-9: break
                 
-                # 記錄點
-                # 避免重複記錄起點
-                if direction == 1 or (direction == -1 and len(path['x']) > 0 and path['x'][-1] != curr_pos[0]):
+                if direction == 1 or (direction == -1 and len(path['x']) > 0):
                     if direction == 1:
-                        path['x'].append(curr_pos[0])
-                        path['y'].append(curr_pos[1])
-                        path['z'].append(curr_pos[2])
-                        path['v'].append(v_val)
+                        path['x'].append(curr_pos[0]); path['y'].append(curr_pos[1]); path['z'].append(curr_pos[2]); path['v'].append(v_val)
                     else:
-                        # 逆向追蹤的點要插在前面
-                        path['x'].insert(0, curr_pos[0])
-                        path['y'].insert(0, curr_pos[1])
-                        path['z'].insert(0, curr_pos[2])
-                        path['v'].insert(0, v_val)
+                        path['x'].insert(0, curr_pos[0]); path['y'].insert(0, curr_pos[1]); path['z'].insert(0, curr_pos[2]); path['v'].insert(0, v_val)
                 
-                # 更新位置 (Euler)
-                # Normalize E to step constant distance
                 curr_pos += direction * (np.array([ex, ey, ez]) / mag) * dt
                 
         if len(path['x']) > 2:
@@ -370,10 +338,7 @@ def calculate_streamlines(X, Y, Z, V, Ex, Ey, Ez, num_lines=30, max_steps=200):
     return streamlines
 
 def create_streamline_figure(streamlines, opacity, line_width):
-    """繪製流線圖"""
     fig = go.Figure()
-    
-    # 收集所有 V 值以決定顏色範圍
     all_v = []
     for s in streamlines: all_v.extend(s['v'])
     if not all_v: return fig
@@ -385,25 +350,18 @@ def create_streamline_figure(streamlines, opacity, line_width):
             x=s['x'], y=s['y'], z=s['z'],
             mode='lines',
             line=dict(
-                color=s['v'],
-                colorscale='Jet',
-                cmin=vmin, cmax=vmax,
-                width=line_width,
-                opacity=opacity
+                color=s['v'], colorscale='Jet', cmin=vmin, cmax=vmax,
+                width=line_width, opacity=opacity
             ),
-            showlegend=False,
-            hoverinfo='skip'
+            showlegend=False, hoverinfo='skip'
         ))
         
-    # Add invisible marker for colorbar
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
         marker=dict(
-            colorscale='Jet',
-            cmin=vmin, cmax=vmax,
-            colorbar=dict(title='電位 V (沿線分佈)', x=0.9),
-            showscale=True
+            colorscale='Jet', cmin=vmin, cmax=vmax,
+            colorbar=dict(title='電位 V', x=0.9), showscale=True
         )
     ))
 
@@ -414,20 +372,16 @@ def create_streamline_figure(streamlines, opacity, line_width):
     )
     return fig
 
-# --- 3D 視覺化 (分組渲染法) ---
+# --- 3D 視覺化 (Log-Binning) ---
 
 def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
-    """繪製 3D 電位等位面"""
     fig = go.Figure(data=go.Isosurface(
         x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
         value=V.flatten(),
         isomin=np.min(V), isomax=np.max(V),
-        surface_count=surface_count,
-        opacity=opacity,
+        surface_count=surface_count, opacity=opacity,
         caps=dict(x_show=show_caps, y_show=show_caps, z_show=show_caps),
-        colorscale='Jet',
-        colorbar=dict(title='電位 V'),
-        hoverinfo='all'
+        colorscale='Jet', colorbar=dict(title='電位 V'), hoverinfo='all'
     ))
     fig.update_layout(
         title="3D 電位分佈 (Isosurfaces)",
@@ -436,69 +390,7 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     )
     return fig
 
-def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """繪製 3D 電場 (固定大小 + 彩虹顏色 - Linear)"""
-    X_sub = X[::stride, ::stride, ::stride].flatten()
-    Y_sub = Y[::stride, ::stride, ::stride].flatten()
-    Z_sub = Z[::stride, ::stride, ::stride].flatten()
-    Ex_sub = Ex[::stride, ::stride, ::stride].flatten()
-    Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
-    Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
-    
-    E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
-    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
-    U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
-    V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
-    W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
-
-    fig = go.Figure()
-    
-    n_bins = 20
-    cmap = plt.get_cmap('jet')
-    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
-    bins = np.linspace(vmin, vmax, n_bins)
-    indices = np.digitize(E_mag, bins) - 1
-    indices = np.clip(indices, 0, n_bins - 1)
-    
-    for i in range(n_bins):
-        mask = (indices == i)
-        if not np.any(mask): continue
-        color_val = i / (n_bins - 1)
-        hex_color = mcolors.to_hex(cmap(color_val))
-        
-        fig.add_trace(go.Cone(
-            x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
-            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
-            colorscale=[[0, hex_color], [1, hex_color]],
-            showscale=False,
-            sizemode="scaled",
-            sizeref=scale,
-            anchor="tail",
-            hoverinfo='u+v+w+name',
-            name=f"E ~ {bins[i]:.2e}"
-        ))
-
-    fig.add_trace(go.Scatter3d(
-        x=[None], y=[None], z=[None],
-        mode='markers',
-        marker=dict(
-            colorscale='Jet',
-            cmin=vmin, cmax=vmax,
-            showscale=True,
-            colorbar=dict(title='電場強度 |E|', x=0.9)
-        )
-    ))
-
-    fig.update_layout(
-        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
-        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
-        margin=dict(l=0, r=0, b=0, t=40), height=700,
-        showlegend=False
-    )
-    return fig
-
 def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """繪製 3D 電場 (固定大小 + Log-Scale 彩虹顏色)"""
     X_sub = X[::stride, ::stride, ::stride].flatten()
     Y_sub = Y[::stride, ::stride, ::stride].flatten()
     Z_sub = Z[::stride, ::stride, ::stride].flatten()
@@ -535,31 +427,19 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
             x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
             u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
             colorscale=[[0, hex_color], [1, hex_color]],
-            showscale=False,
-            sizemode="scaled",
-            sizeref=scale,
-            anchor="tail",
-            hoverinfo='text',
-            text=f"Log(|E|) ~ {bins[i]:.2f}",
-            name=f"Level {i}"
+            showscale=False, sizemode="scaled", sizeref=scale, anchor="tail",
+            hoverinfo='text', text=f"Log(|E|) ~ {bins[i]:.2f}", name=f"Level {i}"
         ))
 
     fig.add_trace(go.Scatter3d(
-        x=[None], y=[None], z=[None],
-        mode='markers',
-        marker=dict(
-            colorscale='Jet',
-            cmin=vmin, cmax=vmax,
-            showscale=True,
-            colorbar=dict(title='Log10(|E|)', x=0.9)
-        )
+        x=[None], y=[None], z=[None], mode='markers',
+        marker=dict(colorscale='Jet', cmin=vmin, cmax=vmax, showscale=True, colorbar=dict(title='Log10(|E|)', x=0.9))
     ))
 
     fig.update_layout(
         title="3D 電場向量分佈 (Log-Scale Intensity)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
-        margin=dict(l=0, r=0, b=0, t=40), height=700,
-        showlegend=False
+        margin=dict(l=0, r=0, b=0, t=40), height=700, showlegend=False
     )
     return fig
 
@@ -1036,7 +916,7 @@ def render_3d_point_charge():
                     name=f"Q={q['q']}", showlegend=False
                 ))
         elif viz_mode == "電場向量 (Vectors)":
-            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
+            fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
             # 加上電荷點
             for q in st.session_state.point_charges_3d:
                 color = 'red' if q['q'] > 0 else 'blue'
@@ -1157,16 +1037,12 @@ elif cat == "函數近似":
     if sub == "傅立葉近似": render_fourier_page()
     else: render_legendre_page()
 elif cat == "電位+電場模擬 (2D)":
-    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
+    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"], key="nav_2d")
     if sub == "笛卡爾": render_laplace_cartesian_2d()
     elif sub == "球座標": render_potential_spherical_2d()
     elif sub == "點電荷": render_potential_point_charge()
 elif cat == "電位+電場模擬 (3D)":
-    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
-    if sub == "笛卡爾": render_3d_cartesian()
-    elif sub == "球座標": render_3d_spherical()
-    elif sub == "點電荷": render_3d_point_charge()
-    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
+    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"], key="nav_3d")
     if sub == "笛卡爾": render_3d_cartesian()
     elif sub == "球座標": render_3d_spherical()
     elif sub == "點電荷": render_3d_point_charge()
