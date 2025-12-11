@@ -7,6 +7,7 @@ import time
 from scipy.integrate import quad
 from scipy import special, signal
 from scipy.special import eval_legendre
+from scipy.interpolate import RegularGridInterpolator # 新增插值工具
 import pandas as pd
 import io
 import sympy as sp
@@ -101,7 +102,6 @@ def smart_parse(input_str):
         return None
 
 def spherical_to_cartesian(r, theta_deg, phi_deg):
-    """球座標轉直角座標 (輸入為角度)"""
     theta = np.deg2rad(theta_deg)
     phi = np.deg2rad(phi_deg)
     x = r * np.sin(theta) * np.cos(phi)
@@ -226,7 +226,7 @@ def calculate_point_charge_field_3d(charges_tuple, grid_range, grid_res):
 
 @st.cache_data(show_spinner=False)
 def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_res):
-    """計算連續球體電荷分佈產生的場 (Discretization Method)"""
+    """計算連續球體電荷分佈產生的場"""
     x = np.linspace(-grid_range, grid_range, grid_res)
     y = np.linspace(-grid_range, grid_range, grid_res)
     z = np.linspace(-grid_range, grid_range, grid_res)
@@ -237,7 +237,6 @@ def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_r
     Ey = np.zeros_like(X)
     Ez = np.zeros_like(X)
     
-    # 固定來源解析度
     num_r, num_theta, num_phi = 8, 12, 12
     dr = R / num_r
     dtheta = np.pi / num_theta
@@ -247,7 +246,6 @@ def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_r
     theta_range = np.linspace(dtheta/2, np.pi - dtheta/2, num_theta)
     phi_range = np.linspace(dphi/2, 2*np.pi - dphi/2, num_phi)
     
-    # 準備自訂表達式的解析函數
     rho_func = None
     if dist_type == "Custom (自訂)" and custom_expr:
         try:
@@ -257,9 +255,7 @@ def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_r
             trans = (standard_transformations + (implicit_multiplication_application,) + (convert_xor,))
             expr = parse_expr(custom_expr, local_dict=local_d, transformations=trans)
             rho_func = sp.lambdify((r_sym, theta_sym, phi_sym), expr, 'numpy')
-        except Exception as e:
-            # 如果解析失敗，稍後在迴圈中處理或直接視為0
-            pass
+        except: pass
 
     source_charges = []
     for r_s in r_range:
@@ -270,15 +266,12 @@ def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_r
                 elif dist_type == "Decaying (1/r)": rho = 1.0 / r_s
                 elif dist_type == "Orbital (p-like)": rho = np.abs(np.cos(theta_s)) * 2.0
                 elif dist_type == "Custom (自訂)" and rho_func:
-                    try:
-                        rho = float(rho_func(r_s, theta_s, phi_s))
-                    except:
-                        rho = 0.0
+                    try: rho = float(rho_func(r_s, theta_s, phi_s))
+                    except: rho = 0.0
                 
                 dV = (r_s**2) * np.sin(theta_s) * dr * dtheta * dphi
                 dq = rho * dV
                 
-                # 弧度轉直角
                 cx = r_s * np.sin(theta_s) * np.cos(phi_s)
                 cy = r_s * np.sin(theta_s) * np.sin(phi_s)
                 cz = r_s * np.cos(theta_s)
@@ -297,7 +290,131 @@ def calculate_continuous_spherical(dist_type, custom_expr, R, grid_range, grid_r
         
     return X, Y, Z, V, Ex, Ey, Ez, len(source_charges)
 
-# --- 3D 視覺化 (改良版：Log-Binning) ---
+# --- 新增功能：計算流線 (Streamlines) ---
+
+@st.cache_data(show_spinner=False)
+def calculate_streamlines(X, Y, Z, V, Ex, Ey, Ez, num_lines=30, max_steps=200):
+    """
+    計算電場流線軌跡
+    Returns: List of {x:[], y:[], z:[], v:[]}
+    """
+    # 建立插值器
+    x_range = X[:,0,0]
+    y_range = Y[0,:,0]
+    z_range = Z[0,0,:]
+    
+    # RegularGridInterpolator requires (z, y, x) or (x, y, z) depending on meshgrid indexing
+    # We used indexing='ij', so it matches (x, y, z)
+    interp_Ex = RegularGridInterpolator((x_range, y_range, z_range), Ex, bounds_error=False, fill_value=0)
+    interp_Ey = RegularGridInterpolator((x_range, y_range, z_range), Ey, bounds_error=False, fill_value=0)
+    interp_Ez = RegularGridInterpolator((x_range, y_range, z_range), Ez, bounds_error=False, fill_value=0)
+    interp_V  = RegularGridInterpolator((x_range, y_range, z_range), V, bounds_error=False, fill_value=0)
+    
+    # 產生種子點 (Seeds)
+    # 在空間中隨機撒點，或者在特定平面撒點
+    # 這裡採用在空間中心區域隨機撒點
+    min_bound = np.array([x_range[0], y_range[0], z_range[0]])
+    max_bound = np.array([x_range[-1], y_range[-1], z_range[-1]])
+    
+    seeds = np.random.uniform(min_bound * 0.8, max_bound * 0.8, (num_lines, 3))
+    
+    streamlines = []
+    dt = (max_bound[0] - min_bound[0]) * 0.01 # 步長
+    
+    for seed in seeds:
+        path = {'x': [], 'y': [], 'z': [], 'v': []}
+        curr_pos = seed.copy()
+        
+        # 雙向積分 (Forward & Backward)
+        for direction in [1, -1]:
+            curr_pos = seed.copy()
+            for _ in range(max_steps):
+                # 檢查邊界
+                if np.any(curr_pos < min_bound) or np.any(curr_pos > max_bound):
+                    break
+                
+                # 取得該點場向量
+                try:
+                    ex = interp_Ex(curr_pos)[0]
+                    ey = interp_Ey(curr_pos)[0]
+                    ez = interp_Ez(curr_pos)[0]
+                    v_val = interp_V(curr_pos)[0]
+                except:
+                    break
+                
+                mag = np.sqrt(ex**2 + ey**2 + ez**2)
+                if mag < 1e-9: break
+                
+                # 記錄點
+                # 避免重複記錄起點
+                if direction == 1 or (direction == -1 and len(path['x']) > 0 and path['x'][-1] != curr_pos[0]):
+                    if direction == 1:
+                        path['x'].append(curr_pos[0])
+                        path['y'].append(curr_pos[1])
+                        path['z'].append(curr_pos[2])
+                        path['v'].append(v_val)
+                    else:
+                        # 逆向追蹤的點要插在前面
+                        path['x'].insert(0, curr_pos[0])
+                        path['y'].insert(0, curr_pos[1])
+                        path['z'].insert(0, curr_pos[2])
+                        path['v'].insert(0, v_val)
+                
+                # 更新位置 (Euler)
+                # Normalize E to step constant distance
+                curr_pos += direction * (np.array([ex, ey, ez]) / mag) * dt
+                
+        if len(path['x']) > 2:
+            streamlines.append(path)
+            
+    return streamlines
+
+def create_streamline_figure(streamlines, opacity, line_width):
+    """繪製流線圖"""
+    fig = go.Figure()
+    
+    # 收集所有 V 值以決定顏色範圍
+    all_v = []
+    for s in streamlines: all_v.extend(s['v'])
+    if not all_v: return fig
+    
+    vmin, vmax = np.percentile(all_v, 5), np.percentile(all_v, 95)
+    
+    for s in streamlines:
+        fig.add_trace(go.Scatter3d(
+            x=s['x'], y=s['y'], z=s['z'],
+            mode='lines',
+            line=dict(
+                color=s['v'],
+                colorscale='Jet',
+                cmin=vmin, cmax=vmax,
+                width=line_width,
+                opacity=opacity
+            ),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+    # Add invisible marker for colorbar
+    fig.add_trace(go.Scatter3d(
+        x=[None], y=[None], z=[None],
+        mode='markers',
+        marker=dict(
+            colorscale='Jet',
+            cmin=vmin, cmax=vmax,
+            colorbar=dict(title='電位 V (沿線分佈)', x=0.9),
+            showscale=True
+        )
+    ))
+
+    fig.update_layout(
+        title="3D 電場流線圖 (Connected Streamlines)",
+        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
+        margin=dict(l=0, r=0, b=0, t=40), height=700
+    )
+    return fig
+
+# --- 3D 視覺化 (分組渲染法) ---
 
 def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
     """繪製 3D 電位等位面"""
@@ -316,6 +433,67 @@ def create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps):
         title="3D 電位分佈 (Isosurfaces)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
         margin=dict(l=0, r=0, b=0, t=40), height=700
+    )
+    return fig
+
+def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
+    """繪製 3D 電場 (固定大小 + 彩虹顏色 - Linear)"""
+    X_sub = X[::stride, ::stride, ::stride].flatten()
+    Y_sub = Y[::stride, ::stride, ::stride].flatten()
+    Z_sub = Z[::stride, ::stride, ::stride].flatten()
+    Ex_sub = Ex[::stride, ::stride, ::stride].flatten()
+    Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
+    Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
+    
+    E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
+    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
+    U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
+    V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
+    W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
+
+    fig = go.Figure()
+    
+    n_bins = 20
+    cmap = plt.get_cmap('jet')
+    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
+    bins = np.linspace(vmin, vmax, n_bins)
+    indices = np.digitize(E_mag, bins) - 1
+    indices = np.clip(indices, 0, n_bins - 1)
+    
+    for i in range(n_bins):
+        mask = (indices == i)
+        if not np.any(mask): continue
+        color_val = i / (n_bins - 1)
+        hex_color = mcolors.to_hex(cmap(color_val))
+        
+        fig.add_trace(go.Cone(
+            x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
+            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
+            colorscale=[[0, hex_color], [1, hex_color]],
+            showscale=False,
+            sizemode="scaled",
+            sizeref=scale,
+            anchor="tail",
+            hoverinfo='u+v+w+name',
+            name=f"E ~ {bins[i]:.2e}"
+        ))
+
+    fig.add_trace(go.Scatter3d(
+        x=[None], y=[None], z=[None],
+        mode='markers',
+        marker=dict(
+            colorscale='Jet',
+            cmin=vmin, cmax=vmax,
+            showscale=True,
+            colorbar=dict(title='電場強度 |E|', x=0.9)
+        )
+    ))
+
+    fig.update_layout(
+        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
+        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
+        margin=dict(l=0, r=0, b=0, t=40), height=700,
+        showlegend=False
     )
     return fig
 
@@ -379,67 +557,6 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
 
     fig.update_layout(
         title="3D 電場向量分佈 (Log-Scale Intensity)",
-        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
-        margin=dict(l=0, r=0, b=0, t=40), height=700,
-        showlegend=False
-    )
-    return fig
-
-def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
-    """繪製 3D 電場 (固定大小 + 彩虹顏色 - Linear)"""
-    X_sub = X[::stride, ::stride, ::stride].flatten()
-    Y_sub = Y[::stride, ::stride, ::stride].flatten()
-    Z_sub = Z[::stride, ::stride, ::stride].flatten()
-    Ex_sub = Ex[::stride, ::stride, ::stride].flatten()
-    Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
-    Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
-    
-    E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
-    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
-    U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
-    V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
-    W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
-
-    fig = go.Figure()
-    
-    n_bins = 20
-    cmap = plt.get_cmap('jet')
-    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
-    bins = np.linspace(vmin, vmax, n_bins)
-    indices = np.digitize(E_mag, bins) - 1
-    indices = np.clip(indices, 0, n_bins - 1)
-    
-    for i in range(n_bins):
-        mask = (indices == i)
-        if not np.any(mask): continue
-        color_val = i / (n_bins - 1)
-        hex_color = mcolors.to_hex(cmap(color_val))
-        
-        fig.add_trace(go.Cone(
-            x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
-            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
-            colorscale=[[0, hex_color], [1, hex_color]],
-            showscale=False,
-            sizemode="scaled",
-            sizeref=scale,
-            anchor="tail",
-            hoverinfo='u+v+w+name',
-            name=f"E ~ {bins[i]:.2e}"
-        ))
-
-    fig.add_trace(go.Scatter3d(
-        x=[None], y=[None], z=[None],
-        mode='markers',
-        marker=dict(
-            colorscale='Jet',
-            cmin=vmin, cmax=vmax,
-            showscale=True,
-            colorbar=dict(title='電場強度 |E|', x=0.9)
-        )
-    ))
-
-    fig.update_layout(
-        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
         margin=dict(l=0, r=0, b=0, t=40), height=700,
         showlegend=False
@@ -746,7 +863,7 @@ def render_3d_cartesian():
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
-            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0, key="viz_mode_cart"
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Vectors)", "電場流線 (Field Lines)"], index=0, key="viz_mode_cart"
         )
         
         st.divider()
@@ -767,14 +884,20 @@ def render_3d_cartesian():
         
         st.divider()
         st.header("🎨 繪圖微調")
+        crop_boundary = st.checkbox("隱藏邊界層 (Hide Boundaries)", value=True, help="隱藏最外層的網格，避免邊界極值影響視覺效果", key="crop_bounds")
+        
         if viz_mode == "電位分佈 (Potential)":
             surface_count = st.slider("等位面層數", 3, 20, 10, key="surf_count_cart")
             opacity = st.slider("透明度", 0.1, 1.0, 0.3, key="opacity_cart")
             show_caps = st.checkbox("顯示封蓋 (Caps)", False, key="caps_cart")
-        else:
+        elif viz_mode == "電場向量 (Vectors)":
             st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
             cone_scale = st.slider("箭頭固定大小", 0.05, 0.2, 0.1, key="cone_scale_cart")
             stride_val = st.slider("採樣間隔 (Stride)", 1, 5, 2, key="stride_cart")
+        else: # Streamlines
+            num_lines = st.slider("流線數量", 10, 50, 20, key="num_lines_cart")
+            line_width = st.slider("線條粗細", 2, 10, 5, key="width_cart")
+            line_opacity = st.slider("線條透明度", 0.1, 1.0, 0.8, key="op_line_cart")
 
     # 2. 計算按鈕
     if st.sidebar.button("🚀 開始模擬", key="btn_3d_cart"):
@@ -783,12 +906,24 @@ def render_3d_cartesian():
             results = calculate_3d_physics(
                 grid_n, v_top, v_bottom, v_left, v_right, v_front, v_back, max_iter, tolerance
             )
+            # Pre-calculate streamlines only if needed, or compute on fly?
+            # Better compute on fly or store raw data. Storing raw data.
             end_time = time.time()
             st.session_state['res_3d_cart'] = (results, end_time - start_time)
 
     # 3. 繪圖與統計
     if st.session_state['res_3d_cart']:
         (X, Y, Z, V, Ex, Ey, Ez, actual_iter), elapsed_time = st.session_state['res_3d_cart']
+        
+        # 根據設定決定顯示範圍
+        if crop_boundary:
+            s = slice(1, -1)
+        else:
+            s = slice(None)
+            
+        X_vis, Y_vis, Z_vis = X[s,s,s], Y[s,s,s], Z[s,s,s]
+        V_vis = V[s,s,s]
+        Ex_vis, Ey_vis, Ez_vis = Ex[s,s,s], Ey[s,s,s], Ez[s,s,s]
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Max V", f"{np.max(V):.1f} V")
@@ -799,11 +934,17 @@ def render_3d_cartesian():
 
         st.divider()
         if viz_mode == "電位分佈 (Potential)":
-            fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
+            fig = create_potential_figure(X_vis, Y_vis, Z_vis, V_vis, opacity, surface_count, show_caps)
+            st.plotly_chart(fig, use_container_width=True)
+        elif viz_mode == "電場向量 (Vectors)":
+            fig = create_field_figure_log(X_vis, Y_vis, Z_vis, Ex_vis, Ey_vis, Ez_vis, cone_scale, stride_val)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-            st.plotly_chart(fig, use_container_width=True)
+            # 只有在需要時才計算流線
+            with st.spinner("計算流線軌跡中..."):
+                streamlines = calculate_streamlines(X_vis, Y_vis, Z_vis, V_vis, Ex_vis, Ey_vis, Ez_vis, num_lines)
+                fig = create_streamline_figure(streamlines, line_opacity, line_width)
+                st.plotly_chart(fig, use_container_width=True)
 
 def render_3d_point_charge():
     st.subheader("⚡ 3D 點電荷模擬")
@@ -812,7 +953,7 @@ def render_3d_point_charge():
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
-            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0, key="viz_mode_point"
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Vectors)", "電場流線 (Field Lines)"], index=0, key="viz_mode_point"
         )
         
         st.divider()
@@ -826,7 +967,6 @@ def render_3d_point_charge():
         nx = c1.number_input("X", 0.0, step=0.5, key="nx")
         ny = c2.number_input("Y", 0.0, step=0.5, key="ny")
         nz = c3.number_input("Z", 0.0, step=0.5, key="nz")
-        # Fix: use keyword 'value' to avoid setting min_value by positional arg
         nq = c4.number_input("Q", value=1.0, step=1.0, key="nq")
         
         if st.button("➕ 新增電荷", use_container_width=True, key="btn_add_point"):
@@ -853,10 +993,14 @@ def render_3d_point_charge():
             surface_count = st.slider("等位面層數", 3, 20, 10, key="surf_count_point")
             opacity = st.slider("透明度", 0.1, 1.0, 0.3, key="opacity_point")
             show_caps = st.checkbox("顯示封蓋", False, key="caps_point")
-        else:
+        elif viz_mode == "電場向量 (Vectors)":
             st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
             cone_scale = st.slider("箭頭大小", 0.3, 1.0, 0.5, key="cone_scale_point")
             stride_val = st.slider("採樣間隔", 1, 3, 1, key="stride_point")
+        else:
+            num_lines = st.slider("流線數量", 10, 50, 20, key="num_lines_pt")
+            line_width = st.slider("線條粗細", 2, 10, 5, key="width_pt")
+            line_opacity = st.slider("線條透明度", 0.1, 1.0, 0.8, key="op_line_pt")
 
     if not st.session_state.point_charges_3d:
         st.info("請先在左側新增電荷")
@@ -891,7 +1035,7 @@ def render_3d_point_charge():
                     mode='markers', marker=dict(size=5, color='white', line=dict(width=2, color='black')),
                     name=f"Q={q['q']}", showlegend=False
                 ))
-        else:
+        elif viz_mode == "電場向量 (Vectors)":
             fig = create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
             # 加上電荷點
             for q in st.session_state.point_charges_3d:
@@ -901,6 +1045,19 @@ def render_3d_point_charge():
                     mode='markers+text', marker=dict(size=8, color=color, line=dict(width=2, color='black')),
                     text=[f"Q={q['q']}"], textposition="top center", name=f"Q={q['q']}"
                 ))
+        else:
+            # Streamlines
+            with st.spinner("計算流線軌跡中..."):
+                streamlines = calculate_streamlines(X, Y, Z, V, Ex, Ey, Ez, num_lines)
+                fig = create_streamline_figure(streamlines, line_opacity, line_width)
+                # 加上電荷點
+                for q in st.session_state.point_charges_3d:
+                    color = 'red' if q['q'] > 0 else 'blue'
+                    fig.add_trace(go.Scatter3d(
+                        x=[q['x']], y=[q['y']], z=[q['z']],
+                        mode='markers', marker=dict(size=8, color=color, line=dict(width=2, color='black')),
+                        showlegend=False
+                    ))
                 
         st.plotly_chart(fig, use_container_width=True)
 
@@ -911,7 +1068,7 @@ def render_3d_spherical():
     with st.sidebar:
         st.markdown("---")
         viz_mode = st.radio(
-            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Electric Field)"], index=0, key="viz_mode_sph"
+            "選擇視覺化模式", ["電位分佈 (Potential)", "電場向量 (Vectors)", "電場流線 (Field Lines)"], index=0, key="viz_mode_sph"
         )
         
         st.divider()
@@ -941,10 +1098,14 @@ def render_3d_spherical():
             surface_count = st.slider("等位面層數", 3, 20, 10, key="surf_count_sph")
             opacity = st.slider("透明度", 0.1, 1.0, 0.3, key="opacity_sph")
             show_caps = st.checkbox("顯示封蓋", False, key="caps_sph")
-        else:
+        elif viz_mode == "電場向量 (Vectors)":
             st.info("箭頭顏色(Rainbow)代表強度，箭頭長度固定。")
             cone_scale = st.slider("箭頭大小", 0.05, 0.5, 0.15, key="cone_scale_sph")
             stride_val = st.slider("採樣間隔", 1, 3, 1, key="stride_sph")
+        else:
+            num_lines = st.slider("流線數量", 10, 50, 20, key="num_lines_sph")
+            line_width = st.slider("線條粗細", 2, 10, 5, key="width_sph")
+            line_opacity = st.slider("線條透明度", 0.1, 1.0, 0.8, key="op_line_sph")
 
     # 計算按鈕
     if st.sidebar.button("🚀 開始模擬", key="btn_3d_continuous"):
@@ -968,10 +1129,15 @@ def render_3d_spherical():
         
         if viz_mode == "電位分佈 (Potential)":
             fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-        else:
+            st.plotly_chart(fig, use_container_width=True)
+        elif viz_mode == "電場向量 (Vectors)":
             fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-            
-        st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            with st.spinner("計算流線軌跡中..."):
+                streamlines = calculate_streamlines(X, Y, Z, V, Ex, Ey, Ez, num_lines)
+                fig = create_streamline_figure(streamlines, line_opacity, line_width)
+                st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
 # 6. 主導航邏輯
@@ -996,6 +1162,10 @@ elif cat == "電位+電場模擬 (2D)":
     elif sub == "球座標": render_potential_spherical_2d()
     elif sub == "點電荷": render_potential_point_charge()
 elif cat == "電位+電場模擬 (3D)":
+    sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
+    if sub == "笛卡爾": render_3d_cartesian()
+    elif sub == "球座標": render_3d_spherical()
+    elif sub == "點電荷": render_3d_point_charge()
     sub = st.sidebar.radio("結構", ["笛卡爾", "球座標", "點電荷"])
     if sub == "笛卡爾": render_3d_cartesian()
     elif sub == "球座標": render_3d_spherical()
