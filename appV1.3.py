@@ -349,9 +349,10 @@ def create_streamline_figure(streamlines, opacity, line_width):
         fig.add_trace(go.Scatter3d(
             x=s['x'], y=s['y'], z=s['z'],
             mode='lines',
+            opacity=opacity,
             line=dict(
                 color=s['v'], colorscale='Jet', cmin=vmin, cmax=vmax,
-                width=line_width, opacity=opacity
+                width=line_width
             ),
             showlegend=False, hoverinfo='skip'
         ))
@@ -440,6 +441,67 @@ def create_field_figure_log(X, Y, Z, Ex, Ey, Ez, scale, stride):
         title="3D 電場向量分佈 (Log-Scale Intensity)",
         scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
         margin=dict(l=0, r=0, b=0, t=40), height=700, showlegend=False
+    )
+    return fig
+
+def create_field_figure_fixed(X, Y, Z, Ex, Ey, Ez, scale, stride):
+    """繪製 3D 電場 (固定大小 + 彩虹顏色 - Linear)"""
+    X_sub = X[::stride, ::stride, ::stride].flatten()
+    Y_sub = Y[::stride, ::stride, ::stride].flatten()
+    Z_sub = Z[::stride, ::stride, ::stride].flatten()
+    Ex_sub = Ex[::stride, ::stride, ::stride].flatten()
+    Ey_sub = Ey[::stride, ::stride, ::stride].flatten()
+    Ez_sub = Ez[::stride, ::stride, ::stride].flatten()
+    
+    E_mag = np.sqrt(Ex_sub**2 + Ey_sub**2 + Ez_sub**2)
+    E_mag_safe = np.where(E_mag == 0, 1e-9, E_mag)
+    U_norm = np.nan_to_num(Ex_sub / E_mag_safe)
+    V_norm = np.nan_to_num(Ey_sub / E_mag_safe)
+    W_norm = np.nan_to_num(Ez_sub / E_mag_safe)
+
+    fig = go.Figure()
+    
+    n_bins = 20
+    cmap = plt.get_cmap('jet')
+    vmin, vmax = np.percentile(E_mag, 2), np.percentile(E_mag, 98)
+    bins = np.linspace(vmin, vmax, n_bins)
+    indices = np.digitize(E_mag, bins) - 1
+    indices = np.clip(indices, 0, n_bins - 1)
+    
+    for i in range(n_bins):
+        mask = (indices == i)
+        if not np.any(mask): continue
+        color_val = i / (n_bins - 1)
+        hex_color = mcolors.to_hex(cmap(color_val))
+        
+        fig.add_trace(go.Cone(
+            x=X_sub[mask], y=Y_sub[mask], z=Z_sub[mask],
+            u=U_norm[mask], v=V_norm[mask], w=W_norm[mask],
+            colorscale=[[0, hex_color], [1, hex_color]],
+            showscale=False,
+            sizemode="scaled",
+            sizeref=scale,
+            anchor="tail",
+            hoverinfo='u+v+w+name',
+            name=f"E ~ {bins[i]:.2e}"
+        ))
+
+    fig.add_trace(go.Scatter3d(
+        x=[None], y=[None], z=[None],
+        mode='markers',
+        marker=dict(
+            colorscale='Jet',
+            cmin=vmin, cmax=vmax,
+            showscale=True,
+            colorbar=dict(title='電場強度 |E|', x=0.9)
+        )
+    ))
+
+    fig.update_layout(
+        title="3D 電場向量分佈 (固定大小 + 彩虹強弱)",
+        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='cube'),
+        margin=dict(l=0, r=0, b=0, t=40), height=700,
+        showlegend=False
     )
     return fig
 
@@ -847,6 +909,7 @@ def render_3d_point_charge():
         nx = c1.number_input("X", 0.0, step=0.5, key="nx")
         ny = c2.number_input("Y", 0.0, step=0.5, key="ny")
         nz = c3.number_input("Z", 0.0, step=0.5, key="nz")
+        # Fix: use keyword 'value' to avoid setting min_value by positional arg
         nq = c4.number_input("Q", value=1.0, step=1.0, key="nq")
         
         if st.button("➕ 新增電荷", use_container_width=True, key="btn_add_point"):
