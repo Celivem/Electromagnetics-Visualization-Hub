@@ -539,7 +539,7 @@ def render_fourier_page():
     with c3: b = st.number_input("終點 b", 3.1415)
     with c4: max_n = st.number_input("最大項數", 50, step=10)
 
-    if st.button("🚀 計算", use_container_width=True):
+    if st.button("🚀 計算", width='stretch'):
         with st.spinner("運算中..."):
             result, error = calculate_fourier_coefficients(func_str, a, b, int(max_n))
             if error: st.error(error)
@@ -564,9 +564,9 @@ def render_fourier_page():
         df = pd.DataFrame({"n": range(len(res["A"])), "An": res["A"], "Bn": res["B"]})
         c1, c2 = st.columns(2)
         buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150); buf.seek(0)
-        c1.download_button("📥 下載圖表", buf, "fourier.png", "image/png", use_container_width=True)
-        c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", use_container_width=True)
-        with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
+        c1.download_button("📥 下載圖表", buf, "fourier.png", "image/png", width='stretch')
+        c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", width='stretch')
+        with st.expander("查看係數表"): st.dataframe(df, width='stretch')
 
 def render_legendre_page():
     st.subheader("🌊 勒讓德級數近似")
@@ -584,7 +584,7 @@ def render_legendre_page():
     with c1: func_str = st.text_input("輸入 f(x)", value="where(x > 0, 1, 0)", key="legendre_input")
     with c2: max_N = st.number_input("最大階數", 20)
 
-    if st.button("🚀 運算", use_container_width=True):
+    if st.button("🚀 運算", width='stretch'):
         with st.spinner("積分中..."):
             coeffs, _, error = calculate_legendre_coefficients(func_str, int(max_N))
             if error: st.error(error)
@@ -616,9 +616,9 @@ def render_legendre_page():
         df = pd.DataFrame({"n": range(len(coeffs)), "cn": coeffs})
         c1, c2 = st.columns(2)
         buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=150); buf.seek(0)
-        c1.download_button("📥 下載圖表", buf, "legendre.png", "image/png", use_container_width=True)
-        c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", use_container_width=True)
-        with st.expander("查看係數表"): st.dataframe(df, use_container_width=True)
+        c1.download_button("📥 下載圖表", buf, "legendre.png", "image/png", width='stretch')
+        c2.download_button("📥 下載係數", df.to_csv(index=False, sep='\t').encode(), "coeffs.csv", "text/csv", width='stretch')
+        with st.expander("查看係數表"): st.dataframe(df, width='stretch')
 
 def render_potential_point_charge():
     st.subheader("⚡ 點電荷電位與電場模擬 (2D)")
@@ -628,8 +628,8 @@ def render_potential_point_charge():
     c3, c4 = st.sidebar.columns(2)
     new_x = c3.number_input("X 座標", value=0.0, step=0.5, min_value=-5.0, max_value=5.0)
     new_y = c4.number_input("Y 座標", value=0.0, step=0.5, min_value=-5.0, max_value=5.0)
-    if st.sidebar.button("➕ 加入電荷", use_container_width=True): st.session_state.point_charges.append({'q': new_q, 'x': new_x, 'y': new_y})
-    if st.sidebar.button("🗑️ 清除所有", use_container_width=True): st.session_state.point_charges = []
+    if st.sidebar.button("➕ 加入電荷", width='stretch'): st.session_state.point_charges.append({'q': new_q, 'x': new_x, 'y': new_y})
+    if st.sidebar.button("🗑️ 清除所有", width='stretch'): st.session_state.point_charges = []
     st.sidebar.divider()
     if st.session_state.point_charges:
         for i, c in enumerate(st.session_state.point_charges): st.sidebar.text(f"{i+1}. q={c['q']}, ({c['x']}, {c['y']})")
@@ -639,7 +639,7 @@ def render_potential_point_charge():
     grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
 
     # 計算按鈕
-    if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_point"):
+    if st.button("🚀 開始模擬", width='stretch', key="btn_2d_point"):
         if st.session_state.point_charges:
             charges_tuple = tuple(st.session_state.point_charges)
             st.session_state['res_2d_point'] = calculate_point_charge_potential(charges_tuple, grid_res)
@@ -676,7 +676,7 @@ def render_laplace_cartesian_2d():
             ti, tv = inp("上", 10.0); bi, bv = inp("下", 0.0); li, lv = inp("左", 0.0); ri, rv = inp("右", 0.0)
             iters = st.slider("迭代", 500, 5000, 2000)
         with c2:
-            if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_fdm"):
+            if st.button("🚀 開始模擬", width='stretch', key="btn_2d_fdm"):
                 sz=40; pad=sz*3; th=(pad if ti else 0)+sz+(pad if bi else 0); tw=(pad if li else 0)+sz+(pad if ri else 0)
                 V = np.zeros((th, tw)); rs=pad if bi else 0; re=rs+sz; cs=pad if li else 0; ce=cs+sz
                 if not ti: V[re-1, cs:ce]=tv
@@ -701,7 +701,7 @@ def render_laplace_cartesian_2d():
         c1, c2 = st.columns(2)
         ts = c1.text_input("V(x,1)", "10"); bs = c1.text_input("V(x,0)", "0"); ls = c2.text_input("V(0,y)", "0"); rs = c2.text_input("V(1,y)", "0")
         
-        if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_ana"):
+        if st.button("🚀 開始模擬", width='stretch', key="btn_2d_ana"):
             x,y,n=sp.symbols('x y n'); pi=sp.pi; terms=[]
             def calc(s, sd):
                 ex=smart_parse(s); 
@@ -747,7 +747,7 @@ def render_potential_spherical_2d():
     grid_res = st.sidebar.slider("網格解析度", 50, 200, 100)
     show_lines = st.sidebar.checkbox("顯示流線", True)
 
-    if st.button("🚀 開始模擬", use_container_width=True, key="btn_2d_sph"):
+    if st.button("🚀 開始模擬", width='stretch', key="btn_2d_sph"):
         if user_input:
             try:
                 r, theta, k = sp.symbols('r theta k', real=True)
@@ -877,16 +877,16 @@ def render_3d_cartesian():
         st.divider()
         if viz_mode == "電位分佈 (Potential)":
             fig = create_potential_figure(X_vis, Y_vis, Z_vis, V_vis, opacity, surface_count, show_caps)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         elif viz_mode == "電場向量 (Vectors)":
             fig = create_field_figure_log(X_vis, Y_vis, Z_vis, Ex_vis, Ey_vis, Ez_vis, cone_scale, stride_val)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             # 只有在需要時才計算流線
             with st.spinner("計算流線軌跡中..."):
                 streamlines = calculate_streamlines(X_vis, Y_vis, Z_vis, V_vis, Ex_vis, Ey_vis, Ez_vis, num_lines)
                 fig = create_streamline_figure(streamlines, line_opacity, line_width)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
 def render_3d_point_charge():
     st.subheader("⚡ 3D 點電荷模擬")
@@ -912,7 +912,7 @@ def render_3d_point_charge():
         # Fix: use keyword 'value' to avoid setting min_value by positional arg
         nq = c4.number_input("Q", value=1.0, step=1.0, key="nq")
         
-        if st.button("➕ 新增電荷", use_container_width=True, key="btn_add_point"):
+        if st.button("➕ 新增電荷", width='stretch', key="btn_add_point"):
             st.session_state.point_charges_3d.append({'x':nx, 'y':ny, 'z':nz, 'q':nq})
         
         st.write("目前電荷：")
@@ -926,7 +926,7 @@ def render_3d_point_charge():
         else:
             st.warning("無電荷")
             
-        if st.button("🗑️ 清空", use_container_width=True, key="btn_clr_point"):
+        if st.button("🗑️ 清空", width='stretch', key="btn_clr_point"):
             st.session_state.point_charges_3d = []
             st.rerun()
 
@@ -1002,7 +1002,7 @@ def render_3d_point_charge():
                         showlegend=False
                     ))
                 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 def render_3d_spherical():
     st.subheader("⚡ 3D 球座標模擬：連續電荷分佈")
@@ -1072,15 +1072,15 @@ def render_3d_spherical():
         
         if viz_mode == "電位分佈 (Potential)":
             fig = create_potential_figure(X, Y, Z, V, opacity, surface_count, show_caps)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         elif viz_mode == "電場向量 (Vectors)":
             fig = create_field_figure_log(X, Y, Z, Ex, Ey, Ez, cone_scale, stride_val)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             with st.spinner("計算流線軌跡中..."):
                 streamlines = calculate_streamlines(X, Y, Z, V, Ex, Ey, Ez, num_lines)
                 fig = create_streamline_figure(streamlines, line_opacity, line_width)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
 # ==========================================
 # 6. 主導航邏輯
