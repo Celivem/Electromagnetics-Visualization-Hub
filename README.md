@@ -331,3 +331,7 @@ This repository merges three earlier small tools (Fourier, Legendre, Laplace); a
 - `Celivem/laplace-solving`
 
 The older `app V1.py` and `app.V1.2.py` remain in the git history.
+
+## License
+
+Released under the [MIT License](LICENSE).

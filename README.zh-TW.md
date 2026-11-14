@@ -331,3 +331,7 @@ $$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r
 - `Celivem/laplace-solving`
 
 舊版 `app V1.py`、`app.V1.2.py` 保留在 git 歷史中。
+
+## 授權
+
+以 [MIT License](LICENSE) 釋出。
