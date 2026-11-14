@@ -31,6 +31,7 @@ The whole app is a single file, `app.py`. Its interface is in Traditional Chines
 - [Troubleshooting and FAQ](#troubleshooting-and-faq)
 - [Limitations](#limitations)
 - [History](#history)
+- [License](#license)
 
 ## Who it is for
 
