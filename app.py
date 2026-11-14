@@ -535,9 +535,9 @@ def render_fourier_page():
     st.sidebar.selectbox("選擇預設波形", list(fourier_examples.keys()), key='fourier_preset', on_change=update_fourier)
     c1, c2, c3, c4 = st.columns(4)
     with c1: func_str = st.text_input("函數 f(x)", value="square(x)", key="fourier_input") 
-    with c2: a = st.number_input("起點 a", -3.1415)
-    with c3: b = st.number_input("終點 b", 3.1415)
-    with c4: max_n = st.number_input("最大項數", 50, step=10)
+    with c2: a = st.number_input("起點 a", value=-3.1415)
+    with c3: b = st.number_input("終點 b", value=3.1415)
+    with c4: max_n = st.number_input("最大項數", min_value=1, value=50, step=10)
 
     if st.button("🚀 計算", width='stretch'):
         with st.spinner("運算中..."):
@@ -582,7 +582,7 @@ def render_legendre_page():
     st.sidebar.selectbox("選擇波形", list(legendre_examples.keys()), key='legendre_preset', on_change=update_legendre)
     c1, c2 = st.columns([3, 1])
     with c1: func_str = st.text_input("輸入 f(x)", value="where(x > 0, 1, 0)", key="legendre_input")
-    with c2: max_N = st.number_input("最大階數", 20)
+    with c2: max_N = st.number_input("最大階數", min_value=0, value=20)
 
     if st.button("🚀 運算", width='stretch'):
         with st.spinner("積分中..."):
@@ -672,7 +672,7 @@ def render_laplace_cartesian_2d():
             st.markdown("##### 邊界條件")
             def inp(l, d):
                 inf = st.checkbox(f"{l} 接地/無窮", key=f"i_{l}")
-                return (True, 0.0) if inf else (False, st.number_input(f"{l} V", float(d), key=f"v_{l}"))
+                return (True, 0.0) if inf else (False, st.number_input(f"{l} V", value=float(d), key=f"v_{l}"))
             ti, tv = inp("上", 10.0); bi, bv = inp("下", 0.0); li, lv = inp("左", 0.0); ri, rv = inp("右", 0.0)
             iters = st.slider("迭代", 500, 5000, 2000)
         with c2:
@@ -821,7 +821,7 @@ def render_3d_cartesian():
             v_right = c1.number_input("右面 (X=1)", value=0.0, step=10.0, key="v_right")
             v_left = c2.number_input("左面 (X=0)", value=0.0, step=10.0, key="v_left")
 
-        max_iter = st.number_input("最大迭代", 3000, step=500, key="max_iter_cart")
+        max_iter = st.number_input("最大迭代", min_value=100, value=3000, step=500, key="max_iter_cart")
         tolerance = st.select_slider("精度", options=[1e-2, 1e-3, 1e-4, 1e-5], value=1e-4, key="tol_cart")
         
         st.divider()
@@ -906,9 +906,9 @@ def render_3d_point_charge():
         st.divider()
         st.header("🔋 電荷管理")
         c1, c2, c3, c4 = st.columns([1,1,1,1.2])
-        nx = c1.number_input("X", 0.0, step=0.5, key="nx")
-        ny = c2.number_input("Y", 0.0, step=0.5, key="ny")
-        nz = c3.number_input("Z", 0.0, step=0.5, key="nz")
+        nx = c1.number_input("X", value=0.0, step=0.5, key="nx")
+        ny = c2.number_input("Y", value=0.0, step=0.5, key="ny")
+        nz = c3.number_input("Z", value=0.0, step=0.5, key="nz")
         # Fix: use keyword 'value' to avoid setting min_value by positional arg
         nq = c4.number_input("Q", value=1.0, step=1.0, key="nq")
         
