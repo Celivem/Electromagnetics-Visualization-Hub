@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this app in teaching materials or a publication, you may cite it as below."
+type: software
+title: "Electromagnetics Visualization Hub: an interactive Streamlit app for series expansions and the Laplace equation"
+abstract: >-
+  A single-file Streamlit teaching app for undergraduate electromagnetics:
+  Fourier and Legendre series approximations, the 2D and 3D Laplace equation
+  by finite differences and analytic solutions, and the potential and field
+  of point charges and continuous charge distributions, with interactive
+  plots in the browser.
+authors:
+  - alias: Celivem
+version: 2.0.0
+date-released: 2026-11-15
+license: MIT
+repository-code: "https://github.com/Celivem/Electromagnetics-Visualization-Hub"
+url: "https://github.com/Celivem/Electromagnetics-Visualization-Hub"
+keywords:
+  - electromagnetics
+  - physics education
+  - Streamlit
+  - Laplace equation
+  - Fourier series
+  - Legendre polynomials
+  - visualization

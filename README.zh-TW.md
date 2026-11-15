@@ -2,6 +2,8 @@
 
 [English](README.md) | **繁體中文**
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/Celivem/Electromagnetics-Visualization-Hub)](https://github.com/Celivem/Electromagnetics-Visualization-Hub/releases) ![Streamlit](https://img.shields.io/badge/Streamlit-%E2%89%A51.50-blue.svg)
+
 用 [Streamlit](https://streamlit.io/) 寫的大學電磁學互動教具：輸入函數或邊界條件，就能在瀏覽器裡看到級數近似、電位與電場分佈。內容對應電磁學入門課（Griffiths 第 2–3 章）的級數展開與 Laplace 方程：傅立葉級數、勒讓德級數、2D 與 3D 的 Laplace 方程，以及點電荷與連續電荷分佈的電位和電場。
 
 整個程式只有一個檔案 `app.py`，介面是繁體中文。
@@ -31,6 +33,8 @@
 - [疑難排解與常見問題](#疑難排解與常見問題)
 - [限制](#限制)
 - [沿革](#沿革)
+- [版本](#版本)
+- [引用](#引用)
 - [授權](#授權)
 
 ## 適合誰用
@@ -38,19 +42,19 @@
 - 正在修電磁學的學生：想親眼看傅立葉或勒讓德級數怎麼收斂、邊界條件怎麼決定 Laplace 方程的解、電偶極的 3D 電場長什麼樣子。
 - 老師與助教：上課時現場示範。
 
-所有物理量都用無因次單位計算，庫倫常數取 $k = 1$；指標上的「V」「V/m」只是標示。
+所有物理量都用無因次單位計算，庫倫常數取 $`k = 1`$；指標上的「V」「V/m」只是標示。
 
 ## 功能一覽
 
 | 模組（側欄） | 頁面 | 計算內容 | 方法 |
 |---|---|---|---|
-| 函數近似 | 傅立葉近似 | 任意 $f(x)$ 在 $[a, b]$ 的傅立葉級數，用滑桿調整項數 | 數值積分求係數（`scipy.integrate.quad`） |
-| | 勒讓德近似 | $f(x)$ 在 $[-1, 1]$ 的勒讓德級數，同時畫直角座標與極座標圖 | `quad` 求係數，$P_n$ 用 `scipy.special.eval_legendre` |
-| 電位+電場模擬 (2D) | 笛卡爾 | 正方形四邊給定電位的 $\nabla^2 V = 0$ | 有限差分（Jacobi 迭代）**或** SymPy 分離變數解析解 |
-| | 球座標 | 自行輸入的 $V(r,\theta)$ 及其電場 $\mathbf E = -\nabla V$，畫在平面上 | SymPy 符號微分 |
+| 函數近似 | 傅立葉近似 | 任意 $`f(x)`$ 在 $`[a, b]`$ 的傅立葉級數，用滑桿調整項數 | 數值積分求係數（`scipy.integrate.quad`） |
+| | 勒讓德近似 | $`f(x)`$ 在 $`[-1, 1]`$ 的勒讓德級數，同時畫直角座標與極座標圖 | `quad` 求係數，$`P_n`$ 用 `scipy.special.eval_legendre` |
+| 電位+電場模擬 (2D) | 笛卡爾 | 正方形四邊給定電位的 $`\nabla^2 V = 0`$ | 有限差分（Jacobi 迭代）**或** SymPy 分離變數解析解 |
+| | 球座標 | 自行輸入的 $`V(r,\theta)`$ 及其電場 $`\mathbf E = -\nabla V`$，畫在平面上 | SymPy 符號微分 |
 | | 點電荷 | 多個點電荷的電位圖與電力線 | 直接疊加 |
-| 電位+電場模擬 (3D) | 笛卡爾 | 單位立方體六面給定電位的 $\nabla^2 V = 0$ | 3D 有限差分（Jacobi 迭代） |
-| | 球座標 | 球內連續電荷密度 $\rho(r,\theta,\phi)$ 產生的場 | 把球切成 1152 個體積元，當成點電荷疊加 |
+| 電位+電場模擬 (3D) | 笛卡爾 | 單位立方體六面給定電位的 $`\nabla^2 V = 0`$ | 3D 有限差分（Jacobi 迭代） |
+| | 球座標 | 球內連續電荷密度 $`\rho(r,\theta,\phi)`$ 產生的場 | 把球切成 1152 個體積元，當成點電荷疊加 |
 | | 點電荷 | 在 3D 空間任意放置點電荷的電位與電場 | 直接疊加 |
 
 每個 3D 頁面都能顯示等位面、電場方向錐，或描出的電力線（Plotly，可旋轉）。傅立葉與勒讓德頁面可以下載 PNG 圖與係數表。
@@ -104,23 +108,27 @@ Streamlit 會印出本機網址（預設 `http://localhost:8501`），用瀏覽�
 | 頁面 | 解析方式 | 語法 | 範例 |
 |---|---|---|---|
 | 傅立葉、勒讓德 | Python `eval`，搭配 NumPy 函數 | Python 語法：次方用 `**`，乘法一律寫 `*` | `x**2`、`sin(pi*x)`、`exp(-x)`、`square(x)`、`where(x > 0, 1, 0)` |
-| 2D 笛卡爾（解析解）、2D 球座標、3D 球座標（自訂 $\rho$） | SymPy `parse_expr`，支援省略乘號，`^` 視為次方 | 一般數學寫法 | `x^2`、`sin(pi x)`、`e^-x`、`k*cos(theta)/r^2` |
+| 2D 笛卡爾（解析解）、2D 球座標、3D 球座標（自訂 $`\rho`$） | SymPy `parse_expr`，支援省略乘號，`^` 視為次方 | 一般數學寫法 | `x^2`、`sin(pi x)`、`e^-x`、`k*cos(theta)/r^2` |
 
-傅立葉與勒讓德頁面可用的名稱：`sin`、`cos`、`tan`、`exp`、`log`、`sqrt`、`abs`、`sign`、`sinh`、`cosh`、`arcsin`、`arccos`、`arctan`、`maximum`、`minimum`、`where`、`heaviside`、`gamma`、`pi`、`square` 與 `sawtooth`（來自 `scipy.signal`）、`legendre(n, x)`（即 $P_n(x)$），以及模組 `np`、`signal`、`special`。
+傅立葉與勒讓德頁面可用的名稱：`sin`、`cos`、`tan`、`exp`、`log`、`sqrt`、`abs`、`sign`、`sinh`、`cosh`、`arcsin`、`arccos`、`arctan`、`maximum`、`minimum`、`where`、`heaviside`、`gamma`、`pi`、`square` 與 `sawtooth`（來自 `scipy.signal`）、`legendre(n, x)`（即 $`P_n(x)`$），以及模組 `np`、`signal`、`special`。
 
-在 SymPy 頁面，`e` 代表自然對數的底，`pi` 代表 $\pi$；變數是 `x`、`y`（2D 笛卡爾）、`r`、`theta`、`k`（2D 球座標）以及 `r`、`theta`、`phi`（3D 球座標）。`sin`、`cos`、`exp`、`sqrt` 等常見 SymPy 函數都能用。
+在 SymPy 頁面，`e` 代表自然對數的底，`pi` 代表 $`\pi`$；變數是 `x`、`y`（2D 笛卡爾）、`r`、`theta`、`k`（2D 球座標）以及 `r`、`theta`、`phi`（3D 球座標）。`sin`、`cos`、`exp`、`sqrt` 等常見 SymPy 函數都能用。
 
 ### 傅立葉級數（傅立葉近似）
 
-設 $f(x)$ 定義在 $[a, b]$，週期 $L = b - a$，$\omega = 2\pi/L$。頁面用 `scipy.integrate.quad` 算出 $n = 0, 1, \dots, N_\text{max}$ 的
+設 $`f(x)`$ 定義在 $`[a, b]`$，週期 $`L = b - a`$，$`\omega = 2\pi/L`$。頁面用 `scipy.integrate.quad` 算出 $`n = 0, 1, \dots, N_\text{max}`$ 的
 
-$$A_n = \frac{2}{L}\int_a^b f(x)\cos(n\omega x)\,dx,\qquad B_n = \frac{2}{L}\int_a^b f(x)\sin(n\omega x)\,dx,$$
+```math
+A_n = \frac{2}{L}\int_a^b f(x)\cos(n\omega x)\,dx,\qquad B_n = \frac{2}{L}\int_a^b f(x)\sin(n\omega x)\,dx,
+```
 
 再在 1000 個點上畫出部分和
 
-$$S_N(x) = \frac{A_0}{2} + \sum_{n=1}^{N}\bigl[A_n\cos(n\omega x) + B_n\sin(n\omega x)\bigr]$$
+```math
+S_N(x) = \frac{A_0}{2} + \sum_{n=1}^{N}\bigl[A_n\cos(n\omega x) + B_n\sin(n\omega x)\bigr]
+```
 
-與原函數（灰線）比較。增加 $N$ 時觀察不連續點附近的過衝，就是 Gibbs 現象。
+與原函數（灰線）比較。增加 $`N`$ 時觀察不連續點附近的過衝，就是 Gibbs 現象。
 
 | 控制項 | 標籤 | 預設值 |
 |---|---|---|
@@ -136,14 +144,16 @@ $$S_N(x) = \frac{A_0}{2} + \sum_{n=1}^{N}\bigl[A_n\cos(n\omega x) + B_n\sin(n\om
 
 ### 勒讓德級數（勒讓德近似）
 
-在 $[-1, 1]$ 上，係數為
+在 $`[-1, 1]`$ 上，係數為
 
-$$c_n = \frac{2n+1}{2}\int_{-1}^{1} f(x)\,P_n(x)\,dx,\qquad f(x) \approx \sum_{n=0}^{N} c_n P_n(x).$$
+```math
+c_n = \frac{2n+1}{2}\int_{-1}^{1} f(x)\,P_n(x)\,dx,\qquad f(x) \approx \sum_{n=0}^{N} c_n P_n(x).
+```
 
 在 400 個點上並排畫兩張圖：
 
-- **直角座標**：目標函數（虛線）與近似，橫軸標為 $x = \cos\theta$。
-- **極座標**：$\theta \in [0, 2\pi]$ 的 $|f(\cos\theta)|$ 與近似的絕對值，也就是球座標 Laplace 方程對應解的角向分佈。
+- **直角座標**：目標函數（虛線）與近似，橫軸標為 $`x = \cos\theta`$。
+- **極座標**：$`\theta \in [0, 2\pi]`$ 的 $`|f(\cos\theta)|`$ 與近似的絕對值，也就是球座標 Laplace 方程對應解的角向分佈。
 
 | 控制項 | 標籤 | 預設值 |
 |---|---|---|
@@ -162,21 +172,25 @@ $$c_n = \frac{2n+1}{2}\int_{-1}^{1} f(x)\,P_n(x)\,dx,\qquad f(x) \approx \sum_{n
 
 **數值解 (FDM)。** 正方形是 40 × 40 的網格。每一邊有電位輸入（`上`／`下`／`左`／`右` V；預設上邊 10，其餘 0）與 **接地/無窮** 勾選框。內部用五點差分的 Jacobi 迭代更新
 
-$$V_{i,j} \leftarrow \tfrac14\bigl(V_{i+1,j} + V_{i-1,j} + V_{i,j+1} + V_{i,j-1}\bigr),$$
+```math
+V_{i,j} \leftarrow \tfrac14\bigl(V_{i+1,j} + V_{i-1,j} + V_{i,j+1} + V_{i,j-1}\bigr),
+```
 
 每次掃描後重設固定的邊，掃描次數由 **迭代** 決定（500–5000，預設 2000）。這裡沒有收斂判斷，進度條顯示掃描進度。
 
-勾選某邊的 **接地/無窮** 時，這一邊就**不**固定電位，而是把網格往這一邊多延伸 120 格（正方形邊長的三倍），最外緣設為 $V = 0$。如此解會平順地延伸到一個遠處電位趨近零的開放區域。畫面只顯示原本的 40 × 40 正方形，以熱圖（`jet` 色階）畫在單位正方形上。
+勾選某邊的 **接地/無窮** 時，這一邊就**不**固定電位，而是把網格往這一邊多延伸 120 格（正方形邊長的三倍），最外緣設為 $`V = 0`$。如此解會平順地延伸到一個遠處電位趨近零的開放區域。畫面只顯示原本的 40 × 40 正方形，以熱圖（`jet` 色階）畫在單位正方形上。
 
-**解析解。** 用 SymPy 語法輸入四個邊界函數 $V(x,1)$、$V(x,0)$、$V(0,y)$、$V(1,y)$（留空或 `0` 表示該邊為零）。每個非零的邊貢獻一組分離變數級數，以上邊為例：
+**解析解。** 用 SymPy 語法輸入四個邊界函數 $`V(x,1)`$、$`V(x,0)`$、$`V(0,y)`$、$`V(1,y)`$（留空或 `0` 表示該邊為零）。每個非零的邊貢獻一組分離變數級數，以上邊為例：
 
-$$V_\text{上}(x,y) = \sum_{n=1}^{\infty} A_n \sin(n\pi x)\,\frac{\sinh(n\pi y)}{\sinh(n\pi)},\qquad A_n = 2\int_0^1 V(x,1)\sin(n\pi x)\,dx,$$
+```math
+V_\text{上}(x,y) = \sum_{n=1}^{\infty} A_n \sin(n\pi x)\,\frac{\sinh(n\pi y)}{\sinh(n\pi)},\qquad A_n = 2\int_0^1 V(x,1)\sin(n\pi x)\,dx,
+```
 
-下、左、右邊分別改用 $\sinh(n\pi(1-y))$、$\sinh(n\pi(1-x))$、$\sinh(n\pi x)$。SymPy 以一般的 $n$ 做符號積分求出 $A_n$，頁面用 LaTeX 印出級數的一般項，接著在 50 × 50 網格上把 $n = 1, \dots, 20$ 的數值加總並畫出熱圖。
+下、左、右邊分別改用 $`\sinh(n\pi(1-y))`$、$`\sinh(n\pi(1-x))`$、$`\sinh(n\pi x)`$。SymPy 以一般的 $`n`$ 做符號積分求出 $`A_n`$，頁面用 LaTeX 印出級數的一般項，接著在 50 × 50 網格上把 $`n = 1, \dots, 20`$ 的數值加總並畫出熱圖。
 
 ### 2D 球座標：極座標切面上的電位
 
-在側欄 **輸入 V(r, theta)** 輸入任意電位 $V(r, \theta)$，或在 **選擇模型** 挑預設：
+在側欄 **輸入 V(r, theta)** 輸入任意電位 $`V(r, \theta)`$，或在 **選擇模型** 挑預設：
 
 | 預設 | 式子 |
 |---|---|
@@ -188,63 +202,71 @@ $$V_\text{上}(x,y) = \sum_{n=1}^{\infty} A_n \sin(n\pi x)\,\frac{\sinh(n\pi y)}
 
 SymPy 算出
 
-$$E_r = -\frac{\partial V}{\partial r},\qquad E_\theta = -\frac{1}{r}\frac{\partial V}{\partial \theta},$$
+```math
+E_r = -\frac{\partial V}{\partial r},\qquad E_\theta = -\frac{1}{r}\frac{\partial V}{\partial \theta},
+```
 
-並用 LaTeX 顯示 $V$ 與 $\mathbf E$。式子取 $k = 1$，在圖面的正方形網格上求值：$r = \sqrt{x^2 + y^2}$，$\theta$ 從圖的 $+x$ 軸量起（`atan2(y, x)`），$r$ 最小取 $10^{-3}$。圖是 $V$ 的填色等高線圖（50 層），可加上由 $\mathbf E$ 換成直角分量後畫的電力線。
+並用 LaTeX 顯示 $`V`$ 與 $`\mathbf E`$。式子取 $`k = 1`$，在圖面的正方形網格上求值：$`r = \sqrt{x^2 + y^2}`$，$`\theta`$ 從圖的 $`+x`$ 軸量起（`atan2(y, x)`），$`r`$ 最小取 $`10^{-3}`$。圖是 $`V`$ 的填色等高線圖（50 層），可加上由 $`\mathbf E`$ 換成直角分量後畫的電力線。
 
 控制項：**範圍**（圖的半寬，1–10，預設 5）、**網格解析度**（50–200，預設 100）、**顯示流線**（預設開）。
 
 ### 2D 點電荷
 
-在正方形 $[-5, 5]^2$ 上，點電荷的電位為
+在正方形 $`[-5, 5]^2`$ 上，點電荷的電位為
 
-$$V(x,y) = \sum_i \frac{q_i}{r_i + 10^{-9}},$$
+```math
+V(x,y) = \sum_i \frac{q_i}{r_i + 10^{-9}},
+```
 
-畫成填色等高線圖（50 層，紅藍色階）加等位線，可選擇加上電力線（由 $-\nabla V$ 求得），電荷以 + 或 − 標出。
+畫成填色等高線圖（50 層，紅藍色階）加等位線，可選擇加上電力線（由 $`-\nabla V`$ 求得），電荷以 + 或 − 標出。
 
-側欄 **🔋 電荷控制** 用 **電荷量 (q)**、**X 座標**／**Y 座標**（−5 到 5，間距 0.5）與 **➕ 加入電荷** 新增電荷，**🗑️ 清除所有** 移除全部。預設是一組電偶極：$(-2, 0)$ 放 $+1$、$(2, 0)$ 放 $-1$。其他控制項：**顯示流線**、**網格解析度**（50–200，預設 100）。
+側欄 **🔋 電荷控制** 用 **電荷量 (q)**、**X 座標**／**Y 座標**（−5 到 5，間距 0.5）與 **➕ 加入電荷** 新增電荷，**🗑️ 清除所有** 移除全部。預設是一組電偶極：$`(-2, 0)`$ 放 $`+1`$、$`(2, 0)`$ 放 $`-1`$。其他控制項：**顯示流線**、**網格解析度**（50–200，預設 100）。
 
 ### 3D 笛卡爾：立方體內的 Laplace 方程
 
-單位立方體切成 $N \times N \times N$ 的網格（**網格點數 (N)**，10–60，預設 30），六個面固定電位（**設定邊界電位**）：
+單位立方體切成 $`N \times N \times N`$ 的網格（**網格點數 (N)**，10–60，預設 30），六個面固定電位（**設定邊界電位**）：
 
 | 面 | 標籤 | 預設值 |
 |---|---|---|
-| $z = 1$ | 頂面 | 100 |
-| $z = 0$ | 底面 | −100 |
-| $y = 1$ | 後面 | 0 |
-| $y = 0$ | 前面 | 0 |
-| $x = 1$ | 右面 | 0 |
-| $x = 0$ | 左面 | 0 |
+| $`z = 1`$ | 頂面 | 100 |
+| $`z = 0`$ | 底面 | −100 |
+| $`y = 1`$ | 後面 | 0 |
+| $`y = 0`$ | 前面 | 0 |
+| $`x = 1`$ | 右面 | 0 |
+| $`x = 0`$ | 左面 | 0 |
 
 內部用六點平均的 Jacobi 迭代鬆弛
 
-$$V_{i,j,k} \leftarrow \tfrac16\bigl(V_{i\pm1,j,k} + V_{i,j\pm1,k} + V_{i,j,k\pm1}\bigr)$$
+```math
+V_{i,j,k} \leftarrow \tfrac16\bigl(V_{i\pm1,j,k} + V_{i,j\pm1,k} + V_{i,j,k\pm1}\bigr)
+```
 
-（六個相鄰點相加），最多 **最大迭代** 次（預設 3000）。每 200 次掃描比較一次相鄰兩次掃描間的最大變化量與 **精度**（1e-2、1e-3、1e-4 或 1e-5，預設 1e-4），小於精度就停止。電場 $\mathbf E = -\nabla V$ 用 `numpy.gradient` 計算，網格間距 $h = 1/(N-1)$。
+（六個相鄰點相加），最多 **最大迭代** 次（預設 3000）。每 200 次掃描比較一次相鄰兩次掃描間的最大變化量與 **精度**（1e-2、1e-3、1e-4 或 1e-5，預設 1e-4），小於精度就停止。電場 $`\mathbf E = -\nabla V`$ 用 `numpy.gradient` 計算，網格間距 $`h = 1/(N-1)`$。
 
-顯示的指標：Max V、Max |E|、網格點數 $N^3$、計算時間（滑鼠移到上面可看停止時的迭代次數）。**隱藏邊界層**（預設開）在圖中隱藏最外層網格點，避免固定的邊界值主導畫面；指標一律用完整網格計算。
+顯示的指標：Max V、Max |E|、網格點數 $`N^3`$、計算時間（滑鼠移到上面可看停止時的迭代次數）。**隱藏邊界層**（預設開）在圖中隱藏最外層網格點，避免固定的邊界值主導畫面；指標一律用完整網格計算。
 
 ### 3D 球座標：球內的連續電荷
 
-半徑 $R$（**球體半徑 (R)**，0.5–2.0，預設 1.2）的球內填入 **電荷分佈模型** 選定的電荷密度：
+半徑 $`R`$（**球體半徑 (R)**，0.5–2.0，預設 1.2）的球內填入 **電荷分佈模型** 選定的電荷密度：
 
-| 選項 | $\rho(r,\theta,\phi)$ |
+| 選項 | $`\rho(r,\theta,\phi)`$ |
 |---|---|
-| Uniform（均勻） | $1$ |
-| Decaying (1/r) | $1/r$ |
-| Orbital (p-like) | $2\lvert\cos\theta\rvert$ |
-| Custom（自訂） | 以 $r$、$\theta$、$\phi$ 寫的 SymPy 式子（預設 `r * cos(theta)`） |
+| Uniform（均勻） | $`1`$ |
+| Decaying (1/r) | $`1/r`$ |
+| Orbital (p-like) | $`2\lvert\cos\theta\rvert`$ |
+| Custom（自訂） | 以 $`r`$、$`\theta`$、$`\phi`$ 寫的 SymPy 式子（預設 `r * cos(theta)`） |
 
-球被切成 $8 \times 12 \times 12 = 1152$ 個體積元（$r$、$\theta$、$\phi$ 都取中點）。每個體積元在中心帶電量 $dq = \rho\, r^2 \sin\theta\, \Delta r\, \Delta\theta\, \Delta\phi$，3D 網格上的電位與電場就是這些點電荷的疊加（$k = 1$），距離小於 0.15 時以 0.15 計。空間範圍是立方體 $[-L, L]^3$，**空間範圍 (±)** $L$ 為 1–4（預設 2），**網格解析度** 每軸 10–30 點（預設 18）。指標：微分單元數、Max |E|、計算時間。
+球被切成 $`8 \times 12 \times 12 = 1152`$ 個體積元（$`r`$、$`\theta`$、$`\phi`$ 都取中點）。每個體積元在中心帶電量 $`dq = \rho\, r^2 \sin\theta\, \Delta r\, \Delta\theta\, \Delta\phi`$，3D 網格上的電位與電場就是這些點電荷的疊加（$`k = 1`$），距離小於 0.15 時以 0.15 計。空間範圍是立方體 $`[-L, L]^3`$，**空間範圍 (±)** $`L`$ 為 1–4（預設 2），**網格解析度** 每軸 10–30 點（預設 18）。指標：微分單元數、Max |E|、計算時間。
 
 ### 3D 點電荷
 
-在 3D 空間任意放置點電荷（側欄 **🔋 電荷管理**：X、Y、Z、Q 與 **➕ 新增電荷**；清單中每個電荷有 **❌** 刪除鈕，**🗑️ 清空** 移除全部）。預設是一組電偶極：$(1, 0, 0)$ 放 $+1$、$(-1, 0, 0)$ 放 $-1$。電位與電場為
+在 3D 空間任意放置點電荷（側欄 **🔋 電荷管理**：X、Y、Z、Q 與 **➕ 新增電荷**；清單中每個電荷有 **❌** 刪除鈕，**🗑️ 清空** 移除全部）。預設是一組電偶極：$`(1, 0, 0)`$ 放 $`+1`$、$`(-1, 0, 0)`$ 放 $`-1`$。電位與電場為
 
-$$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r_i^3},$$
+```math
+V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r_i^3},
+```
 
-計算範圍是立方體 $[-L, L]^3$（**空間範圍 (±)**，1.0–5.0，預設 2.5），**網格解析度** 每軸 10–40 點（預設 20）；距離小於 0.2 時以 0.2 計，避免奇異點。每種顯示模式都會把電荷畫在圖上。指標：Max |V|、Max |E|、計算時間。
+計算範圍是立方體 $`[-L, L]^3`$（**空間範圍 (±)**，1.0–5.0，預設 2.5），**網格解析度** 每軸 10–40 點（預設 20）；距離小於 0.2 時以 0.2 計，避免奇異點。每種顯示模式都會把電荷畫在圖上。指標：Max |V|、Max |E|、計算時間。
 
 ### 3D 顯示模式
 
@@ -252,13 +274,13 @@ $$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r
 
 | 模式 | 畫面 | 控制項（範圍，預設） |
 |---|---|---|
-| 電位分佈 (Potential) | $V$ 從最小值到最大值的 Plotly 等位面 | 等位面層數 3–20（10）、透明度 0.1–1.0（0.3）、顯示封蓋（關） |
-| 電場向量 (Vectors) | 固定大小、指向 $\mathbf E$ 的錐形箭頭；顏色代表 $\log_{10}\lvert\mathbf E\rvert$，在第 5 到第 95 百分位之間分 20 級 | 箭頭大小、採樣間隔（每隔幾個網格點畫一個） |
-| 電場流線 (Field Lines) | 從隨機起點描出的電力線，顏色代表 $V$（第 5 到第 95 百分位） | 流線數量 10–50（20）、線條粗細 2–10（5）、線條透明度 0.1–1.0（0.8） |
+| 電位分佈 (Potential) | $`V`$ 從最小值到最大值的 Plotly 等位面 | 等位面層數 3–20（10）、透明度 0.1–1.0（0.3）、顯示封蓋（關） |
+| 電場向量 (Vectors) | 固定大小、指向 $`\mathbf E`$ 的錐形箭頭；顏色代表 $`\log_{10}\lvert\mathbf E\rvert`$，在第 5 到第 95 百分位之間分 20 級 | 箭頭大小、採樣間隔（每隔幾個網格點畫一個） |
+| 電場流線 (Field Lines) | 從隨機起點描出的電力線，顏色代表 $`V`$（第 5 到第 95 百分位） | 流線數量 10–50（20）、線條粗細 2–10（5）、線條透明度 0.1–1.0（0.8） |
 
 各頁的箭頭大小與採樣間隔範圍：笛卡爾 0.05–0.2（0.1）與 1–5（2）；點電荷 0.3–1.0（0.5）與 1–3（1）；球座標 0.05–0.5（0.15）與 1–3（1）。
 
-電力線的起點隨機均勻分佈在盒子中央 80 % 的範圍內。每條線從起點往前、往後沿單位向量 $\mathbf E/\lvert\mathbf E\rvert$ 以固定步長（盒子寬度的 1 %）前進，每個方向最多 200 步；網格上的電場用三線性內插取值（`scipy.interpolate.RegularGridInterpolator`）。離開盒子或場強低於 $10^{-9}$ 時停止，少於三個點的線捨棄。
+電力線的起點隨機均勻分佈在盒子中央 80 % 的範圍內。每條線從起點往前、往後沿單位向量 $`\mathbf E/\lvert\mathbf E\rvert`$ 以固定步長（盒子寬度的 1 %）前進，每個方向最多 200 步；網格上的電場用三線性內插取值（`scipy.interpolate.RegularGridInterpolator`）。離開盒子或場強低於 $`10^{-9}`$ 時停止，少於三個點的線捨棄。
 
 ## 運作方式
 
@@ -281,25 +303,35 @@ $$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r
 .
 ├── app.py                     # 整個 Streamlit 程式
 ├── requirements.txt           # Python 套件
+├── tests/
+│   └── test_app_smoke.py      # 每一頁的背景冒煙測試（Streamlit AppTest）
 ├── .devcontainer/
 │   └── devcontainer.json      # GitHub Codespaces：Python 3.11，自動在 8501 埠啟動
 ├── docs/
 │   ├── fourier.png            # 截圖：傅立葉頁面
 │   └── 3d_point_charge.png    # 截圖：3D 點電荷
 ├── .gitignore
+├── CHANGELOG.md               # 版本與變更紀錄
+├── CITATION.cff               # 引用資訊（GitHub「Cite this repository」）
 ├── README.md                  # 英文說明
 └── README.zh-TW.md            # 本檔（繁體中文）
 ```
 
 ## 測試
 
-目前沒有自動化測試。修改後請執行 `streamlit run app.py`，實際操作受影響的頁面。
+`tests/test_app_smoke.py` 用 Streamlit 的 `AppTest` 在背景驅動 app，不需要瀏覽器。它打開每一頁、每個按鈕按一次、切換每種模式（例如數值解與解析解），遇到任何例外或錯誤訊息就失敗；另外檢查數值輸入框的預設值。安裝好相依套件後，在 repo 根目錄執行：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+目前結果：`Ran 2 tests ... OK`，約 15 秒（Streamlit 1.67、Python 3.12）。這個測試只確認程式不會出錯，不檢查圖的物理是否正確；改到物理計算時，仍請執行 `streamlit run app.py` 實際看受影響的頁面。
 
 ## 疑難排解與常見問題
 
 **傅立葉或勒讓德的圖是空的，或係數是 `nan`。** 這兩頁把函數當 Python 程式碼求值，`x^2`（在 Python 是位元 XOR）、`sin(pi x)`、`2x` 都不成立，請寫成 `x**2`、`sin(pi*x)`、`2*x`。`x^2` 這類數學寫法只在[函數的寫法](#函數的寫法)列出的 SymPy 頁面有效。
 
-**3D 球座標頁的自訂 $\rho$ 看起來和均勻球一樣。** 自訂式子無法解析時，程式不會報錯，而是直接改用 $\rho = 1$；式子能解析但在某些點求值失敗時，那些體積元的 $\rho$ 取 0。請檢查 `r`、`theta`、`phi` 與函數名稱的拼法。
+**3D 球座標頁的自訂 $`\rho`$ 看起來和均勻球一樣。** 自訂式子無法解析時，程式不會報錯，而是直接改用 $`\rho = 1`$；式子能解析但在某些點求值失敗時，那些體積元的 $`\rho`$ 取 0。請檢查 `r`、`theta`、`phi` 與函數名稱的拼法。
 
 **改了參數卻沒有變化。** 物理參數要再按一次執行按鈕才會生效，見[導覽與執行按鈕](#導覽與執行按鈕)。
 
@@ -307,7 +339,7 @@ $$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r
 
 **改了流線數量後，流線的樣子不同。** 起點是隨機取的。輸入完全相同時會沿用快取結果，畫面不會變；任何輸入改變就會重新取點。
 
-**3D 頁面在高解析度時很慢。** 計算量隨網格點數（$N^3$）增加。3D 笛卡爾在較細的網格上也需要更多次迭代才會收斂；如果在達到精度前就停在迭代上限，請提高 **最大迭代**。
+**3D 頁面在高解析度時很慢。** 計算量隨網格點數（$`N^3`$）增加。3D 笛卡爾在較細的網格上也需要更多次迭代才會收斂；如果在達到精度前就停在迭代上限，請提高 **最大迭代**。
 
 **下載的 `coeffs.csv` 打開後只有一欄。** 檔案以 Tab 分隔，匯入時請選 Tab 作為分隔符號。
 
@@ -315,11 +347,11 @@ $$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r
 
 ## 限制
 
-- 無因次單位，$k = 1$；不使用 $\varepsilon_0$ 等 SI 常數。
-- 2D 有限差分固定用 40 × 40 網格、固定掃描次數，沒有收斂判斷；2D 解析解的級數加到 $n = 20$。
-- 點電荷的奇異點以截斷距離（3D 為 0.2、連續球為 0.15）或加上 $10^{-9}$（2D）處理，電荷旁邊的數值不具物理意義。
+- 無因次單位，$`k = 1`$；不使用 $`\varepsilon_0`$ 等 SI 常數。
+- 2D 有限差分固定用 40 × 40 網格、固定掃描次數，沒有收斂判斷；2D 解析解的級數加到 $`n = 20`$。
+- 點電荷的奇異點以截斷距離（3D 為 0.2、連續球為 0.15）或加上 $`10^{-9}`$（2D）處理，電荷旁邊的數值不具物理意義。
 - 連續球固定切成 1152 個體積元。
-- 2D 球座標頁只顯示一個平面，$\theta$ 從圖的 $+x$ 軸量起；它不解邊界值問題，而是畫出你輸入的電位。
+- 2D 球座標頁只顯示一個平面，$`\theta`$ 從圖的 $`+x`$ 軸量起；它不解邊界值問題，而是畫出你輸入的電位。
 - 2D 點電荷頁的電荷只能一次全部清除。
 - 介面只有繁體中文。
 
@@ -333,6 +365,26 @@ $$V = \sum_i \frac{q_i}{r_i},\qquad \mathbf E = \sum_i \frac{q_i\,\mathbf r_i}{r
 
 舊版 `app V1.py`、`app.V1.2.py` 保留在 git 歷史中。
 
+## 版本
+
+各版本與變更內容見 [CHANGELOG.md](CHANGELOG.md)（英文）與 [Releases 頁面](https://github.com/Celivem/Electromagnetics-Visualization-Hub/releases)。要執行某個固定版本，從 release 下載原始碼壓縮檔，或切到它的 tag（例如 `git checkout v2.0.0`），再照上面的步驟安裝執行。
+
+## 引用
+
+如果你把這個 app 用在教材或論文中，GitHub 頁面右側的 **Cite this repository**（由 [CITATION.cff](CITATION.cff) 產生）提供 APA 與 BibTeX 格式：
+
+```bibtex
+@software{celivem_em_visualization_hub,
+  author  = {Celivem},
+  title   = {Electromagnetics Visualization Hub: an interactive Streamlit app for series expansions and the Laplace equation},
+  version = {2.0.0},
+  year    = {2026},
+  url     = {https://github.com/Celivem/Electromagnetics-Visualization-Hub}
+}
+```
+
 ## 授權
 
-以 [MIT License](LICENSE) 釋出。
+- **程式**（`app.py` 與設定檔）：[MIT License](LICENSE)。可以使用、修改與部署，包括用於教學；複製程式時請保留授權聲明。
+- **圖**（`docs/`）是 app 的截圖，同樣以 MIT License 釋出。
+- **相依套件**（Streamlit、NumPy、SciPy、Matplotlib、pandas、SymPy、Plotly）由 pip 安裝，各自適用原本的寬鬆授權（Apache-2.0、BSD、MIT，以及 BSD 風格的 Matplotlib 授權），本 repo 沒有隨附任何一個。
